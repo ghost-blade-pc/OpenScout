@@ -1,0 +1,18 @@
+/OpenScout Agent 项目方案.md
+
+# Local runtime artifacts
+/.idea/
+/.vscode/
+*.log
+
+# Java
+target/
+
+# Go
+bin/
+*.test
+
+# Environment
+.env
+.env.*
+!.env.example

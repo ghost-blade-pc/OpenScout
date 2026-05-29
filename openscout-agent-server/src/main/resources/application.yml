@@ -1,0 +1,28 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: openscout-agent-server
+  datasource:
+    url: ${MYSQL_URL:jdbc:mysql://localhost:3306/openscout?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}
+    username: ${MYSQL_USER:openscout}
+    password: ${MYSQL_PASSWORD:openscout}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  ai:
+    openai:
+      api-key: ${DEEPSEEK_API_KEY:}
+      base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
+      chat:
+        options:
+          model: ${DEEPSEEK_MODEL:deepseek-chat}
+
+openscout:
+  collector-base-url: ${OPSCOUT_COLLECTOR_BASE_URL:http://localhost:8081}
+  mock-agent: ${OPSCOUT_MOCK_AGENT:true}
+  trace:
+    max-summary-length: ${OPSCOUT_TRACE_MAX_SUMMARY_LENGTH:800}
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
