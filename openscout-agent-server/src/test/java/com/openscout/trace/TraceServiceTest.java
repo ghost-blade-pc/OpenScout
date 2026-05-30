@@ -11,7 +11,7 @@ class TraceServiceTest {
     void sanitizeShouldRedactSensitiveValuesAndTruncateLargeText() {
         OpenScoutProperties properties = new OpenScoutProperties();
         properties.getTrace().setMaxSummaryLength(40);
-        TraceService traceService = new TraceService(properties);
+        TraceService traceService = new TraceService(properties, null);
 
         String sanitized = traceService.sanitize("Authorization: Bearer abc token=secret-value and a very long body");
 

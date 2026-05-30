@@ -6,7 +6,7 @@ OpenScout Agent 是一个面向开发者的开源项目情报分析与学习路�
 
 - Java 17 + Spring Boot + MyBatis-Plus：提供 `/api/agent/ask`，执行 mock Agent 编排、规则评分和 Trace。
 - Go 1.22 + Gin：提供 Repo Collector 接口，支持 mock 模式和可选 GitHub API 模式。
-- MySQL + Redis：通过 Docker Compose 提供本地依赖；第一阶段 Java Trace 使用内存实现，SQL 已预留表结构。
+- MySQL + Redis：通过 Docker Compose 提供本地依赖；**持久化默认关闭**，启用方式见下方"持久化"章节。
 - Spring AI + DeepSeek V4 Pro：配置位已预留，后续阶段再接真实 Tool Calling。
 
 ## 目录
@@ -83,6 +83,38 @@ Spring AI 模型默认不启用，避免 mock 演示在未配置 Key 时启动�
 export SPRING_AI_MODEL_CHAT=openai
 export DEEPSEEK_API_KEY=<secret>
 ```
+
+## 持久化（阶段 4）
+
+`agent_trace`、`repo_info`、`repo_analysis` 可通过 MyBatis-Plus 写入 MySQL。**持久化默认关闭**，以保持阶段 3 的纯 mock 演示不依赖 MySQL。
+
+启用持久化：
+
+```bash
+export OPSCOUT_PERSISTENCE_ENABLED=true
+docker compose -f deploy/docker-compose.yml up -d mysql
+cd openscout-agent-server && mvn spring-boot:run
+```
+
+调用 `/api/agent/ask` 后验证数据落库：
+
+```bash
+docker exec openscout-mysql mysql -uopenscout -popenscout openscout \
+  -e "select trace_id,status,latency_ms from agent_trace order by id desc limit 5;"
+
+docker exec openscout-mysql mysql -uopenscout -popenscout openscout \
+  -e "select full_name,language,stars from repo_info order by id desc limit 5;"
+
+docker exec openscout-mysql mysql -uopenscout -popenscout openscout \
+  -e "select full_name,total_score from repo_analysis order by id desc limit 5;"
+```
+
+重启 Java 后仍可通过 `/api/agent/traces/{traceId}` 从 MySQL 查询历史 Trace。
+
+**重要约束**：
+- Trace 只保存摘要和脱敏字段，不保存完整 README、完整 prompt、模型 Key 或 GitHub Token。
+- `/api/agent/traces/{traceId}` 仅用于本地排障，未做鉴权，不应公网暴露。
+- 重复 mock ask 对 `repo_info.full_name` 做幂等 upsert，不会因唯一索引冲突而失败。
 
 ## 验证
 

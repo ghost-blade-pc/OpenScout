@@ -6,6 +6,7 @@ import java.util.List;
 
 public class AgentTrace {
 
+    private Long id;
     private final String traceId;
     private final String userQuestion;
     private final Instant startedAt;
@@ -20,6 +21,14 @@ public class AgentTrace {
         this.traceId = traceId;
         this.userQuestion = userQuestion;
         this.startedAt = startedAt;
+    }
+
+    public Long getId() {
+        return id;
+    }
+
+    public void setId(Long id) {
+        this.id = id;
     }
 
     public String getTraceId() {
