@@ -3,6 +3,7 @@
 # Local runtime artifacts
 /.idea/
 /.vscode/
+/.tools/
 *.log
 
 # Java
