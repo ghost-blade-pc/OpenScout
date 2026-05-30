@@ -5,6 +5,7 @@ import com.openscout.agent.AgentAskResponse;
 import com.openscout.agent.AgentCallException;
 import com.openscout.agent.AgentErrorResponse;
 import com.openscout.agent.MockAgentService;
+import com.openscout.client.RateLimitException;
 import com.openscout.trace.AgentTrace;
 import com.openscout.trace.TraceService;
 import org.springframework.http.HttpStatus;
@@ -48,7 +49,10 @@ public class AgentController {
 
     @ExceptionHandler(AgentCallException.class)
     public ResponseEntity<AgentErrorResponse> handleAgentCallException(AgentCallException ex) {
-        return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
-                .body(new AgentErrorResponse(ex.getTraceId(), ex.getMessage()));
+        ResponseEntity.BodyBuilder builder = ResponseEntity.status(HttpStatus.BAD_GATEWAY);
+        if (ex.getCause() instanceof RateLimitException rateLimitEx && rateLimitEx.getRetryAfterSeconds() > 0) {
+            builder.header("Retry-After", String.valueOf(rateLimitEx.getRetryAfterSeconds()));
+        }
+        return builder.body(new AgentErrorResponse(ex.getTraceId(), ex.getMessage()));
     }
 }

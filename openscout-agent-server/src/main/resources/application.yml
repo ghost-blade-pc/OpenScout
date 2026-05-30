@@ -28,6 +28,7 @@ spring:
 openscout:
   collector-base-url: ${OPSCOUT_COLLECTOR_BASE_URL:http://localhost:8081}
   mock-agent: ${OPSCOUT_MOCK_AGENT:true}
+  collector-mode: ${OPSCOUT_COLLECTOR_MODE:mock}
   persistence:
     enabled: ${OPSCOUT_PERSISTENCE_ENABLED:false}
   trace:

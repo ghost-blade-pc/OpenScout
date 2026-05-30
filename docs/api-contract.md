@@ -14,7 +14,7 @@ Request:
 }
 ```
 
-Response:
+Response (200):
 
 ```json
 {
@@ -42,6 +42,17 @@ Response:
   "latencyMs": 42
 }
 ```
+
+Error (502 Bad Gateway):
+
+```json
+{
+  "traceId": "uuid",
+  "message": "Agent 执行失败... (error details)"
+}
+```
+
+限流时 Response 头会包含 `Retry-After: <seconds>`。
 
 ### GET `/api/agent/traces/{traceId}`
 
@@ -86,3 +97,27 @@ Response:
   "errors": []
 }
 ```
+
+### 错误响应（阶段 5+）
+
+所有端点非 2xx 时返回结构化 `ErrorResponse`：
+
+```json
+{
+  "error": "github rate limit exceeded",
+  "code": "RATE_LIMITED",
+  "retryAfter": 60
+}
+```
+
+`code` 可选值：
+
+| code | HTTP 状态码 | 含义 |
+|---|---|---|
+| `RATE_LIMITED` | 429 | GitHub 限流，`retryAfter` 有效 |
+| `FORBIDDEN` | 403 | GitHub 鉴权失败或访问被拒 |
+| `NOT_FOUND` | 404 | 仓库/资源不存在 |
+| `API_ERROR` | 其他 4xx/5xx | 通用 GitHub API 错误 |
+| `INTERNAL` | N/A | Go Collector 内部错误（非 GitHub 侧） |
+
+兼容性说明：Java 侧优先解析 `code` 字段，解析失败时 fallback 到旧版 `{"message":"..."}` 格式。

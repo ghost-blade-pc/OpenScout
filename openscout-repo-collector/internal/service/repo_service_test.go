@@ -10,7 +10,7 @@ import (
 )
 
 func TestMockRepos(t *testing.T) {
-	svc := NewRepoService("mock", nil, cache.NewMemoryCache(time.Minute), slog.Default())
+	svc := NewRepoService("mock", nil, cache.NewMemoryCache(time.Minute), slog.Default(), 4)
 
 	items := svc.MockRepos("spring ai")
 
@@ -23,7 +23,7 @@ func TestMockRepos(t *testing.T) {
 }
 
 func TestBatchProfileAllowsPartialFailure(t *testing.T) {
-	svc := NewRepoService("mock", nil, cache.NewMemoryCache(time.Minute), slog.Default())
+	svc := NewRepoService("mock", nil, cache.NewMemoryCache(time.Minute), slog.Default(), 4)
 
 	response := svc.BatchProfile(context.Background(), []string{"spring-projects/spring-ai", "bad"}, "mock")
 

@@ -45,3 +45,10 @@ type RepoError struct {
 	FullName string `json:"fullName"`
 	Message  string `json:"message"`
 }
+
+// ErrorResponse 结构化 API 错误响应，供 Go router 返回给调用方。
+type ErrorResponse struct {
+	Error      string `json:"error"`
+	Code       string `json:"code"`
+	RetryAfter int    `json:"retryAfter"`
+}

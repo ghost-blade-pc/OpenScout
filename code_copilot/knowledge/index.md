@@ -8,6 +8,7 @@
 - `code_copilot/changes/openscout-mvp-foundation/`：第一阶段 MVP 骨架与核心推荐闭环，已在阶段 3 mock e2e 验证后归档为 `done`。
 - `code_copilot/changes/openscout-mock-e2e-demo/`：阶段 3 Java 调 Go mock 端到端验证记录，已归档为 `done`；包含 Go `/api/repos/mock`、Java `/api/agent/ask`、Trace 查询、Collector 不可用 502 场景、Spring AI 模型 provider 默认关闭配置。
 - `code_copilot/changes/openscout-mybatis-persistence/`：阶段 4 MyBatis-Plus 持久化，已归档为 `done`；包含 agent_trace/repo_info/repo_analysis Entity/Mapper/Service、持久化开关、内存+MySQL 双查、幂等 upsert、脱敏和 MySQL 集成验证。
+- `code_copilot/changes/openscout-github-real-api/`：阶段 5 GitHub 真实 API 集成，`apply-done`；包含 Go 结构化错误、可配置参数、Java CollectorClient 真实方法、真实模式编排、Java 异常层级、双模式开关设计。
 
 ## 已沉淀知识
 
@@ -78,12 +79,84 @@ docker exec openscout-mysql mysql -uopenscout -popenscout openscout \
 - 持久化默认关闭时 `mvn test` 无需 MySQL。
 - `repo_analysis` 每次 ask 追加新记录，不覆盖历史分析。
 
+## 阶段 5 GitHub 真实 API 知识（2026-05-30 实现完成）
+
+### Go 结构化错误模式
+
+- **文件**：`openscout-repo-collector/internal/github/errors.go`、`internal/model/models.go`、`internal/api/router.go`
+- `GitHubError` 结构体：`StatusCode int`、`Code string`（`RATE_LIMITED`/`FORBIDDEN`/`NOT_FOUND`/`API_ERROR`）、`Message string`、`RetryAfter int`
+- `GitHubError` 实现 `error` 接口（`Error() string`），可被既有调用方透传。
+- `newGitHubError(statusCode, body, retryAfterHeader)` 根据 HTTP 状态码自动分类。
+- `parseRetryAfter(value)` 先按秒数解析，再按 HTTP 日期（`time.RFC1123`）解析。
+- `model.ErrorResponse`：`Error string`、`Code string`、`RetryAfter int` — 供 router 返回 JSON。
+- Router 层 `toErrorResponse(err)`：`errors.As(err, &ghErr)` 检测 `*GitHubError` 映射字段，普通 `error` → `Code: "INTERNAL"`。
+- **关键点**：`getJSON` 中 404 放在条件链最前面检查，确保 `NOT_FOUND` 优先分类。
+
+### Go 可配置参数约定
+
+- **文件**：`openscout-repo-collector/cmd/server/main.go`
+- 环境变量 → Go 类型辅助函数：`envInt(key, fallback, logger)`、`envFloat(key, fallback, logger)`
+- 参数表：
+
+| 环境变量 | Go 类型 | 默认值 | 用途 |
+|---|---|---|---|
+| `OPSCOUT_RATE_LIMIT_RPS` | `float64` → `rate.Limit` | 2 | GitHub API 每秒请求数 |
+| `OPSCOUT_RATE_LIMIT_BURST` | `int` | 4 | 突发请求数 |
+| `OPSCOUT_CACHE_TTL_MINUTES` | `int` → `time.Duration` | 10 | 缓存 TTL（分钟） |
+| `OPSCOUT_WORKER_CONCURRENCY` | `int` | 4 | 批量采集并发数 |
+| `OPSCOUT_HTTP_TIMEOUT_SECONDS` | `int` → `time.Duration` | 8 | HTTP 客户端超时（秒） |
+
+- 解析失败 → `slog.Warn` + 静默回退到默认值，不阻塞启动。
+- `NewRepoService` 新增第 5 个参数 `workerConcurrency int`，`BatchProfile` 使用 `s.workerConcurrency` 替代硬编码 `4`。
+
+### Java CollectorClient 真实 API 调用模式
+
+- **文件**：`openscout-agent-server/src/main/java/com/openscout/client/CollectorClient.java`
+- 四个真实方法：`searchRepos(keyword, limit, mode)`、`getProfile(owner, repo, mode)`、`getReadme(owner, repo, mode)`、`batchProfile(repos, mode)`
+- `mode` 参数通过 query param 传递给 Go Collector；`effectiveMode(modeOverride)` 优先用覆盖值，否则用 `openscout.collector-mode` 配置。
+- 统一错误翻译：`executeWithErrorHandling(Supplier<T>)` 包装所有调用。
+  - `ResourceAccessException`（连接超时/拒绝）→ `CollectorUnavailableException`
+  - `RestClientResponseException`（非 2xx）→ `parseCollectorError()` → `RateLimitException` / `GitHubApiException`
+- 错误解析双路径：优先解析 Go 新 `ErrorResponse`（`{"error":"...","code":"...","retryAfter":0}`），失败时 fallback 到旧版 `{"message":"..."}`。
+
+### Java 异常层级设计
+
+- **文件**：`openscout-agent-server/src/main/java/com/openscout/client/`
+- 层级：`CollectorException(RuntimeException)` → `RateLimitException`、`CollectorUnavailableException`、`GitHubApiException`
+- `RateLimitException`：携带 `retryAfterSeconds`，用于友好提示和 `Retry-After` 响应头。
+- `CollectorUnavailableException`：Go Collector 连接故障，对应 HTTP 502。
+- `GitHubApiException`：携带 `httpStatus` 和 `errorCode`（`FORBIDDEN`/`NOT_FOUND`/`API_ERROR`），README 获取失败时按 errorCode 决定是否跳过。
+- `AgentController.handleAgentCallException()` 检测 cause 为 `RateLimitException` 时自动添加 `Retry-After` 响应头。
+
+### 双模式开关设计
+
+- **Go 侧**：`OPSCOUT_COLLECTOR_MODE` 环境变量 → Go `main.go` → `RepoService.useMock(mode)`。
+- **Java 侧**：`OPSCOUT_MOCK_AGENT` 环境变量 → `application.yml` → `OpenScoutProperties.mockAgent` → `MockAgentService.ask()` 分支。
+- Java 侧新增 `openscout.collector-mode: ${OPSCOUT_COLLECTOR_MODE:mock}` — 控制 Java 调用 Go 时的 `?mode=` 参数，与 Go 自身模式独立。
+- 四种组合均有明确语义（详见 README.md 真实模式章节）。
+
+### 真实模式编排流程
+
+- **文件**：`openscout-agent-server/src/main/java/com/openscout/agent/MockAgentService.java`
+- `askReal()` 流程：`searchRepos` → `enrichWithReadme`（前 5 个）→ `scoreAndRank` → `buildRealAnswer` → persist。
+- `MAX_README_FETCH = 5` — 控制 README 获取上限，避免 N+1 耗尽 API 配额。
+- `enrichWithReadme`：获取 README → 前 2000 字符正则检测 `hasExamples`（`(?i)\b(example|sample|demo|tutorial|quickstart)\b`）→ 从 topics 检测 `hasDocker` → 构造 enriched `RepoSummary`。
+- 异常处理：`GitHubApiException`（404）和 `RateLimitException` 静默跳过，其他异常 `log.warn` 跳过——单个 README 失败不阻塞整体。
+
+### 已知约束
+
+- 阶段 5 不包含 Redis adapter、Spring AI DeepSeek、ETag/304、learning_goal/learning_task。
+- 无 GitHub Token 时匿名限流 60 req/h；有 Token 时 5000 req/h。
+- Go 错误响应兼容旧版 `{"message":"..."}` 格式，Java 侧双路径解析。
+- `MockAgentService` 虽名含 "Mock"，实际同时承载 mock 和真实两条路径——这是有意设计，避免新增类。
+
 ## 待沉淀主题
 
 - TODO: Spring AI ChatClient、Tool Calling、Advisor、结构化输出与 DeepSeek V4 Pro 的实际版本和项目用法。
-- TODO: GitHub REST API 限流、ETag、README、Release、目录树接口的实际封装策略。
-- TODO: Go Collector worker pool、rate limiter、retry、cache 的实现约定。
-- TODO: OpenScout 项目评分公式和 evidence JSON 结构。
+- TODO: GitHub REST API ETag/304 条件请求优化（P1 可选项，延后至后续阶段）。
+- [x] GitHub REST API 限流、错误分类（403/429/404）、README 获取策略 → 已沉淀到阶段 5 知识。
+- [x] Go Collector worker pool、rate limiter、cache 的实现约定 → 已沉淀到阶段 5 知识（可配置参数表）。
+- TODO: OpenScout 项目评分公式和 evidence JSON 结构（当前评分规则硬编码在 `ProjectScoreService` 中）。
 - [x] Agent Trace 字段、脱敏策略和查询方式 → 已沉淀到阶段 4 知识。
 
 ## 索引规则

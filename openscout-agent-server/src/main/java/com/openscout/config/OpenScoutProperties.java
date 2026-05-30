@@ -7,6 +7,7 @@ public class OpenScoutProperties {
 
     private String collectorBaseUrl = "http://localhost:8081";
     private boolean mockAgent = true;
+    private String collectorMode = "mock";
     private Persistence persistence = new Persistence();
     private Trace trace = new Trace();
 
@@ -24,6 +25,14 @@ public class OpenScoutProperties {
 
     public void setMockAgent(boolean mockAgent) {
         this.mockAgent = mockAgent;
+    }
+
+    public String getCollectorMode() {
+        return collectorMode;
+    }
+
+    public void setCollectorMode(String collectorMode) {
+        this.collectorMode = collectorMode;
     }
 
     public Persistence getPersistence() {

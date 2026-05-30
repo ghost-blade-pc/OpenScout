@@ -103,16 +103,10 @@ func (c *Client) getJSON(ctx context.Context, endpoint string, target any) error
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
-		return fmt.Errorf("github rate limit or access denied: status=%d remaining=%s reset=%s",
-			resp.StatusCode,
-			resp.Header.Get("X-RateLimit-Remaining"),
-			resp.Header.Get("X-RateLimit-Reset"),
-		)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusForbidden ||
+		resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("github request failed: status=%d body=%s", resp.StatusCode, string(body))
+		return newGitHubError(resp.StatusCode, string(body), resp.Header.Get("Retry-After"))
 	}
 	return json.NewDecoder(resp.Body).Decode(target)
 }

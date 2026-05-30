@@ -77,6 +77,68 @@ go run ./cmd/server
 
 未配置 `GITHUB_TOKEN` 时也可以访问公开 API，但会受到更严格的频率限制。演示优先使用 mock 模式。
 
+## 真实模式使用（阶段 5）
+
+本阶段提供了两个独立的模式开关，分别控制 Go Collector 和 Java Agent 的行为：
+
+| 开关 | 作用 | 默认值 |
+|---|---|---|
+| `OPSCOUT_COLLECTOR_MODE` (Go) | `mock` / `github` — 控制 Go Collector 数据源 | `mock` |
+| `OPSCOUT_MOCK_AGENT` (Java) | `true` / `false` — 控制 Java Agent 编排路径 | `true` |
+
+四种组合：
+
+| Go `OPSCOUT_COLLECTOR_MODE` | Java `OPSCOUT_MOCK_AGENT` | 行为 |
+|---|---|---|
+| `mock` | `true` | 完全 mock（默认，无需 Token） |
+| `github` | `true` | Java 仍调 mock Agent（不推荐，Go 启动真实模式但 Java 不调用） |
+| `mock` | `false` | Java 调 Go 真实端点，Go 返回 mock 数据（用于测试 Java → Go 链路） |
+| `github` | `false` | 完全真实模式（需要 Token，生产演示） |
+
+**真实模式完整启动步骤：**
+
+```bash
+# 1. 设置 Go Collector 为真实模式
+export OPSCOUT_COLLECTOR_MODE=github
+export GITHUB_TOKEN=<secret>
+# 可选：调整限流/缓存/并发
+export OPSCOUT_RATE_LIMIT_RPS=2
+export OPSCOUT_CACHE_TTL_MINUTES=10
+export OPSCOUT_WORKER_CONCURRENCY=4
+export OPSCOUT_HTTP_TIMEOUT_SECONDS=8
+
+# 2. 启动 Go Collector
+cd openscout-repo-collector && go run ./cmd/server &
+
+# 3. 设置 Java Agent 为非 mock 模式
+export OPSCOUT_MOCK_AGENT=false
+
+# 4. 启动 Java Agent Server
+cd openscout-agent-server && mvn spring-boot:run &
+
+# 5. 调用真实模式 Agent
+curl -X POST http://localhost:8080/api/agent/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"我想学习 Spring AI Agent"}'
+```
+
+**速率限制说明：**
+
+- 未配置 `GITHUB_TOKEN`：60 次/小时（GitHub 匿名限制）。
+- 已配置 `GITHUB_TOKEN`：5000 次/小时（GitHub 认证用户限制）。
+- 遇到限流（429）时，Java 会返回带 `Retry-After` 头的友好提示。
+- README 获取限制为前 5 个 repo，避免 N+1 次调用快速耗尽配额。
+
+**Go Collector 可配置参数：**
+
+| 环境变量 | 默认值 | 说明 |
+|---|---|---|
+| `OPSCOUT_RATE_LIMIT_RPS` | `2` | GitHub API 每秒请求数 |
+| `OPSCOUT_RATE_LIMIT_BURST` | `4` | 突发请求数 |
+| `OPSCOUT_CACHE_TTL_MINUTES` | `10` | 进程内缓存 TTL（分钟） |
+| `OPSCOUT_WORKER_CONCURRENCY` | `4` | 批量采集并发数 |
+| `OPSCOUT_HTTP_TIMEOUT_SECONDS` | `8` | HTTP 客户端超时（秒） |
+
 Spring AI 模型默认不启用，避免 mock 演示在未配置 Key 时启动失败。后续接入 DeepSeek 时再显式开启：
 
 ```bash

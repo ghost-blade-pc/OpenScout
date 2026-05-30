@@ -13,21 +13,26 @@ import (
 )
 
 type RepoService struct {
-	mode         string
-	githubClient *github.Client
-	cache        *cache.MemoryCache
-	logger       *slog.Logger
+	mode             string
+	githubClient     *github.Client
+	cache            *cache.MemoryCache
+	logger           *slog.Logger
+	workerConcurrency int
 }
 
-func NewRepoService(mode string, githubClient *github.Client, cache *cache.MemoryCache, logger *slog.Logger) *RepoService {
+func NewRepoService(mode string, githubClient *github.Client, cache *cache.MemoryCache, logger *slog.Logger, workerConcurrency int) *RepoService {
 	if mode == "" {
 		mode = "mock"
 	}
+	if workerConcurrency <= 0 {
+		workerConcurrency = 4
+	}
 	return &RepoService{
-		mode:         mode,
-		githubClient: githubClient,
-		cache:        cache,
-		logger:       logger,
+		mode:             mode,
+		githubClient:     githubClient,
+		cache:            cache,
+		logger:           logger,
+		workerConcurrency: workerConcurrency,
 	}
 }
 
@@ -162,7 +167,7 @@ func (s *RepoService) BatchProfile(ctx context.Context, repos []string, mode str
 	if len(repos) == 0 {
 		return BatchProfileResponse{}
 	}
-	pool := worker.NewPool(4)
+	pool := worker.NewPool(s.workerConcurrency)
 	return pool.Run(ctx, repos, func(ctx context.Context, fullName string) (RepoSummary, error) {
 		owner, repo, ok := splitFullName(fullName)
 		if !ok {
