@@ -139,6 +139,38 @@ curl -X POST http://localhost:8080/api/agent/ask \
 | `OPSCOUT_WORKER_CONCURRENCY` | `4` | 批量采集并发数 |
 | `OPSCOUT_HTTP_TIMEOUT_SECONDS` | `8` | HTTP 客户端超时（秒） |
 
+## LLM 智能回答（阶段 6）
+
+本阶段接入 DeepSeek V4 Pro 作为自然语言生成层。LLM 负责两件事：
+- **目标解释**：将用户自然语言目标（如"我想一周内学 Spring AI"）提取为 GitHub 搜索关键词
+- **回答生成**：基于规则评分结果生成个性化的自然语言推荐文本
+
+**Fallback 机制**：未配置 `DEEPSEEK_API_KEY` 或 LLM 调用失败时，自动降级为模板回答，不影响搜索和评分链路。
+
+启用 LLM：
+
+```bash
+export DEEPSEEK_API_KEY=<secret>
+# SPRING_AI_MODEL_CHAT 默认已设为 openai，无需额外设置
+```
+
+强制禁用 LLM（使用模板回答）：
+
+```bash
+export OPSCOUT_LLM_ENABLED=false
+```
+
+LLM 调用详情（prompt 摘要、response 摘要、耗时）记录在 `/api/agent/traces/{traceId}` 中。
+
+**LLM 可配置参数：**
+
+| 环境变量 | 默认值 | 说明 |
+|---|---|---|
+| `OPSCOUT_LLM_ENABLED` | `true` | 设为 `false` 强制模板模式 |
+| `OPSCOUT_LLM_TIMEOUT_SECONDS` | `30` | LLM API 调用超时（秒） |
+| `OPSCOUT_LLM_MAX_TOKENS` | `2000` | 回答最大 token 数 |
+| `OPSCOUT_LLM_TEMPERATURE` | `0.7` | LLM 温度参数 |
+
 Spring AI 模型默认不启用，避免 mock 演示在未配置 Key 时启动失败。后续接入 DeepSeek 时再显式开启：
 
 ```bash

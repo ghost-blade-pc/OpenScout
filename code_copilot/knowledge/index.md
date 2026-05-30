@@ -8,7 +8,8 @@
 - `code_copilot/changes/openscout-mvp-foundation/`：第一阶段 MVP 骨架与核心推荐闭环，已在阶段 3 mock e2e 验证后归档为 `done`。
 - `code_copilot/changes/openscout-mock-e2e-demo/`：阶段 3 Java 调 Go mock 端到端验证记录，已归档为 `done`；包含 Go `/api/repos/mock`、Java `/api/agent/ask`、Trace 查询、Collector 不可用 502 场景、Spring AI 模型 provider 默认关闭配置。
 - `code_copilot/changes/openscout-mybatis-persistence/`：阶段 4 MyBatis-Plus 持久化，已归档为 `done`；包含 agent_trace/repo_info/repo_analysis Entity/Mapper/Service、持久化开关、内存+MySQL 双查、幂等 upsert、脱敏和 MySQL 集成验证。
-- `code_copilot/changes/openscout-github-real-api/`：阶段 5 GitHub 真实 API 集成，`apply-done`；包含 Go 结构化错误、可配置参数、Java CollectorClient 真实方法、真实模式编排、Java 异常层级、双模式开关设计。
+- `code_copilot/changes/openscout-github-real-api/`：阶段 5 GitHub 真实 API 集成，`done`；包含 Go 结构化错误、可配置参数、Java CollectorClient 真实方法、真实模式编排、Java 异常层级、双模式开关设计。
+- `code_copilot/changes/openscout-spring-ai-deepseek-agent/`：阶段 6 Spring AI + DeepSeek Agent 编排，`done`；包含 ChatClient 手动配置、GoalInterpreter/AnswerGenerator、AgentService 重命名、LLM fallback 策略、Trace 增强。
 
 ## 已沉淀知识
 
@@ -148,11 +149,65 @@ docker exec openscout-mysql mysql -uopenscout -popenscout openscout \
 - 阶段 5 不包含 Redis adapter、Spring AI DeepSeek、ETag/304、learning_goal/learning_task。
 - 无 GitHub Token 时匿名限流 60 req/h；有 Token 时 5000 req/h。
 - Go 错误响应兼容旧版 `{"message":"..."}` 格式，Java 侧双路径解析。
-- `MockAgentService` 虽名含 "Mock"，实际同时承载 mock 和真实两条路径——这是有意设计，避免新增类。
+- `MockAgentService` 虽名含 "Mock"，实际同时承载 mock 和真实两条路径——这是有意设计，避免新增类。（阶段 6 已重命名为 `AgentService`。）
+
+## 阶段 6 Spring AI + DeepSeek Agent 知识（2026-05-30 实现完成）
+
+### LLM 配置模式
+
+- **文件**：`openscout-agent-server/src/main/java/com/openscout/config/LlmConfig.java`
+- 手动创建 `ChatClient` Bean，不依赖 Spring AI auto-config。
+- 双重 guard：`DEEPSEEK_API_KEY` 缺失 → log.warn + return null；`ChatModel`（Spring AI auto-config 创建）不可用 → log.warn + return null。
+- 调用方 `GoalInterpreter` / `AnswerGenerator` 使用 `@Autowired(required = false) ChatClient`，null 时自动 fallback 到模板回答。
+- `application.yml` 中 `spring.ai.model.chat` 默认值改为 `openai`（原 `none`），使 Spring AI auto-config 默认创建 `OpenAiChatModel` Bean。
+- LLM 可配置参数：`openscout.llm.enabled`（`true`）、`timeout-seconds`（30）、`max-tokens`（2000）、`temperature`（0.7）。
+
+### GoalInterpreter 目标解释
+
+- **文件**：`openscout-agent-server/src/main/java/com/openscout/agent/GoalInterpreter.java`
+- System prompt 约束 LLM 只返回 `{"keyword":"...","language":"...","domain":"..."}` JSON。
+- `extractJson()` 处理 LLM 响应可能包裹的 markdown 代码块（`` ```json ... ``` ``），再交给 Jackson 反序列化。
+- 目标解释固定使用低温度（`INTERPRET_TEMPERATURE = 0.3`）以保证 JSON 输出稳定；maxTokens 固定 300（目标解释只需要短输出）。
+- Fallback 三步：ChatClient null → 直接 fallback；LLM 调用异常 → log.warn + fallback；JSON 解析失败 → log.warn + fallback。Fallback 结果 keyword = 原始 userGoal。
+- 无 Trace 版本 `interpret(goal)` 委托到 `interpret(goal, null, null)`，LLM 调用逻辑提取到 `callLlm()` 私有方法。
+
+### AnswerGenerator 回答生成
+
+- **文件**：`openscout-agent-server/src/main/java/com/openscout/agent/AnswerGenerator.java`
+- System prompt 核心约束：评分由规则引擎计算不得修改、推荐理由必须引用评分证据、不得编造项目特性。
+- `buildUserPrompt()` 将 `List<ProjectRecommendation>` 格式化为结构化文本（含总分、五维分、描述、语言、stars、evidence）。
+- Evidence 截断 300 字符（`MAX_EVIDENCE_LENGTH`），description 截断 150 字符。
+- 无 Trace 版本 `generate(goal, recs)` 委托到 `generate(goal, recs, null, null)`，LLM 调用逻辑提取到 `callLlm()` 私有方法。
+- Fallback 模板回答以 "（LLM 不可用，返回模板回答。）" 结尾，便于排障。
+
+### AgentService 重命名与 LLM 整合
+
+- **文件**：`openscout-agent-server/src/main/java/com/openscout/agent/AgentService.java`（原 `MockAgentService.java`）
+- Spring `@Service` 默认 Bean 名从 `mockAgentService` → `agentService`。
+- `AgentController` 字段类型和构造函数同步更新。
+- 编排流程：`goalInterpreter.interpret(question)` → search repos → `enrichWithReadme` → `scoreAndRank` → `answerGenerator.generate(question, recs)`。
+- 去除了 `buildMockAnswer`、`buildRealAnswer` 模板方法——回答生成统一由 `AnswerGenerator` 负责。
+- `enrichWithReadme` 去除了阶段 5 时未使用的 `trace` 参数。
+
+### LLM Trace 模式
+
+- toolName：`llm_goal_interpret`、`llm_answer_generate`。
+- inputSummary：截断的 user prompt 前 200 字符；outputSummary：截断的 LLM 响应前 300 字符。
+- 时间度量统一使用 `Instant.now()` + `Duration.between()`（与 AgentService 其他 Trace 调用一致）。
+- 仅当 `traceService != null && trace != null` 时记录 Trace（无 Trace 版本传 null）。
+
+### 已知约束
+
+- 阶段 6 不包含 Spring AI Tool Calling（`@Tool` 注解）、MCP 协议、Streaming/SSE、RAG。
+- LLM 不可用时自动降级为模板回答，不影响搜索和评分链路。
+- `OPSCOUT_LLM_ENABLED=false` 可强制关闭 LLM 使用模板模式。
+- DeepSeek V4 Pro 通过 OpenAI 兼容协议接入，base-url 指向 `https://api.deepseek.com`。
+- `DEEPSEEK_API_KEY` 仅通过环境变量传入，不在日志/Trace/代码中显式出现。
 
 ## 待沉淀主题
 
-- TODO: Spring AI ChatClient、Tool Calling、Advisor、结构化输出与 DeepSeek V4 Pro 的实际版本和项目用法。
+- TODO: Spring AI Tool Calling（`@Tool` 注解）、Advisor、结构化输出与 DeepSeek V4 Pro 的实际版本和项目用法（Function Calling 兼容性待验证）。
+- [x] Spring AI ChatClient 手动配置、DeepSeek OpenAI 协议接入、LLM fallback 策略 → 已沉淀到阶段 6 知识。
 - TODO: GitHub REST API ETag/304 条件请求优化（P1 可选项，延后至后续阶段）。
 - [x] GitHub REST API 限流、错误分类（403/429/404）、README 获取策略 → 已沉淀到阶段 5 知识。
 - [x] Go Collector worker pool、rate limiter、cache 的实现约定 → 已沉淀到阶段 5 知识（可配置参数表）。

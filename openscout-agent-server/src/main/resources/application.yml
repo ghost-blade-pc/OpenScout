@@ -11,7 +11,7 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver
   ai:
     model:
-      chat: ${SPRING_AI_MODEL_CHAT:none}
+      chat: ${SPRING_AI_MODEL_CHAT:openai}
       embedding: ${SPRING_AI_MODEL_EMBEDDING:none}
       image: ${SPRING_AI_MODEL_IMAGE:none}
       moderation: ${SPRING_AI_MODEL_MODERATION:none}
@@ -29,6 +29,11 @@ openscout:
   collector-base-url: ${OPSCOUT_COLLECTOR_BASE_URL:http://localhost:8081}
   mock-agent: ${OPSCOUT_MOCK_AGENT:true}
   collector-mode: ${OPSCOUT_COLLECTOR_MODE:mock}
+  llm:
+    enabled: ${OPSCOUT_LLM_ENABLED:true}
+    timeout-seconds: ${OPSCOUT_LLM_TIMEOUT_SECONDS:30}
+    max-tokens: ${OPSCOUT_LLM_MAX_TOKENS:2000}
+    temperature: ${OPSCOUT_LLM_TEMPERATURE:0.7}
   persistence:
     enabled: ${OPSCOUT_PERSISTENCE_ENABLED:false}
   trace:

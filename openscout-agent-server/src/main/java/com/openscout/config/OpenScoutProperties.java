@@ -8,6 +8,7 @@ public class OpenScoutProperties {
     private String collectorBaseUrl = "http://localhost:8081";
     private boolean mockAgent = true;
     private String collectorMode = "mock";
+    private Llm llm = new Llm();
     private Persistence persistence = new Persistence();
     private Trace trace = new Trace();
 
@@ -35,6 +36,14 @@ public class OpenScoutProperties {
         this.collectorMode = collectorMode;
     }
 
+    public Llm getLlm() {
+        return llm;
+    }
+
+    public void setLlm(Llm llm) {
+        this.llm = llm;
+    }
+
     public Persistence getPersistence() {
         return persistence;
     }
@@ -49,6 +58,45 @@ public class OpenScoutProperties {
 
     public void setTrace(Trace trace) {
         this.trace = trace;
+    }
+
+    public static class Llm {
+        private boolean enabled = true;
+        private int timeoutSeconds = 30;
+        private int maxTokens = 2000;
+        private double temperature = 0.7;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public int getTimeoutSeconds() {
+            return timeoutSeconds;
+        }
+
+        public void setTimeoutSeconds(int timeoutSeconds) {
+            this.timeoutSeconds = timeoutSeconds;
+        }
+
+        public int getMaxTokens() {
+            return maxTokens;
+        }
+
+        public void setMaxTokens(int maxTokens) {
+            this.maxTokens = maxTokens;
+        }
+
+        public double getTemperature() {
+            return temperature;
+        }
+
+        public void setTemperature(double temperature) {
+            this.temperature = temperature;
+        }
     }
 
     public static class Persistence {

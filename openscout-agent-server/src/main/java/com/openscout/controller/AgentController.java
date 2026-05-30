@@ -4,7 +4,7 @@ import com.openscout.agent.AgentAskRequest;
 import com.openscout.agent.AgentAskResponse;
 import com.openscout.agent.AgentCallException;
 import com.openscout.agent.AgentErrorResponse;
-import com.openscout.agent.MockAgentService;
+import com.openscout.agent.AgentService;
 import com.openscout.client.RateLimitException;
 import com.openscout.trace.AgentTrace;
 import com.openscout.trace.TraceService;
@@ -22,17 +22,17 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/agent")
 public class AgentController {
 
-    private final MockAgentService mockAgentService;
+    private final AgentService agentService;
     private final TraceService traceService;
 
-    public AgentController(MockAgentService mockAgentService, TraceService traceService) {
-        this.mockAgentService = mockAgentService;
+    public AgentController(AgentService agentService, TraceService traceService) {
+        this.agentService = agentService;
         this.traceService = traceService;
     }
 
     @PostMapping("/ask")
     public AgentAskResponse ask(@RequestBody AgentAskRequest request) {
-        return mockAgentService.ask(request);
+        return agentService.ask(request);
     }
 
     @GetMapping("/traces/{traceId}")
