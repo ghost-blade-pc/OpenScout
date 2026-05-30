@@ -1,6 +1,6 @@
 # code_copilot - OpenScout Agent SpecAI 工作台
 
-本目录是 `OpenScout Agent` 的 AI 协作工作台，用于管理项目级规则、需求规格、任务拆分、测试计划、执行日志和可复用知识。当前仓库还没有应用源码，本工作区以项目方案文档为初始约定，后续创建真实代码后必须回填证据路径。
+本目录是 `OpenScout Agent` 的 AI 协作工作台，用于管理项目级规则、需求规格、任务拆分、测试计划、执行日志和可复用知识。当前仓库已创建 Java Agent Server、Go Repo Collector、Docker Compose、README 和演示文档；后续变更必须继续把真实代码路径和验证证据回填到 change 文档。
 
 ## 项目状态
 
@@ -9,7 +9,7 @@
 - 技术栈：计划使用 Java 17、Spring Boot 3.x、Spring AI、MyBatis-Plus、Go 1.22+、Gin、MySQL、Redis、Docker Compose。
 - 构建工具：计划 Java 使用 Maven；Go 使用 go modules。
 - 根包名/命名空间：Java 建议使用 `com.openscout`；Go module 使用 `github.com/LiPeicheng/openscout-repo-collector`。
-- 测试框架：TODO: 待创建源码时确认，建议 Java 使用 JUnit 5/Spring Boot Test，Go 使用标准 `testing`。
+- 测试框架：Java 使用 JUnit 5/Surefire；Go 使用标准 `testing`。
 
 ## 目录说明
 

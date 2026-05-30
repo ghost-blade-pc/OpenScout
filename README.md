@@ -77,6 +77,13 @@ go run ./cmd/server
 
 未配置 `GITHUB_TOKEN` 时也可以访问公开 API，但会受到更严格的频率限制。演示优先使用 mock 模式。
 
+Spring AI 模型默认不启用，避免 mock 演示在未配置 Key 时启动失败。后续接入 DeepSeek 时再显式开启：
+
+```bash
+export SPRING_AI_MODEL_CHAT=openai
+export DEEPSEEK_API_KEY=<secret>
+```
+
 ## 验证
 
 ```bash

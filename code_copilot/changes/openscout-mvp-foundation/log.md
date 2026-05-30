@@ -3,9 +3,9 @@
 ## 基本信息
 
 - change：`openscout-mvp-foundation`
-- status：apply
+- status：done
 - created：2026-05-29
-- last_updated：2026-05-29
+- last_updated：2026-05-30
 
 ## Research 记录
 
@@ -36,6 +36,7 @@
 | 2026-05-29 | 创建本地依赖与 DDL | `deploy/docker-compose.yml`、`deploy/init.sql` | 已完成，Compose config 通过 |
 | 2026-05-29 | 创建项目说明和演示文档 | `README.md`、`docs/`、`.env.example` | 已完成 |
 | 2026-05-29 | 同步 apply 状态 | `spec.md`、`tasks.md`、`test-spec.md`、`log.md`、`project-context.md` | 已完成 |
+| 2026-05-30 | 阶段 3 mock e2e 回填后归档 | `code_copilot/changes/openscout-mvp-foundation/` | 已完成，状态标记为 `done` |
 
 ## 决策记录
 
@@ -46,6 +47,7 @@
 - Trace 第一阶段记录请求级和工具摘要，step-level trace 可后续拆分。
 - Java Trace 第一阶段采用内存实现，`deploy/init.sql` 先预留 `agent_trace` 表，后续再接 MyBatis-Plus Mapper。
 - Go Collector 第一阶段采用进程内 TTL 缓存，Redis adapter 延后；Docker Compose 仍提供 Redis 依赖用于后续增强。
+- 阶段 3 完成后归档本 change；mock e2e 的实际验证记录沉淀在 `code_copilot/changes/openscout-mock-e2e-demo/`。
 
 ## 验证记录
 
@@ -61,10 +63,10 @@
 - `docker compose -f deploy/docker-compose.yml config` 通过，MySQL/Redis 服务配置可解析。
 - `cd openscout-repo-collector && go version` 失败：`go: command not found`。
 - `cd openscout-repo-collector && gofmt -w cmd internal` 失败：`gofmt: command not found`。
-- Go 侧 `go test ./...`、`go run ./cmd/server`、curl 接口验证未执行，原因是本机缺少 Go 工具链且未启动长驻服务。
+- Go 工具链已在后续阶段补齐；阶段 3 已完成 mock e2e 验证：Go `/health` 和 `/api/repos/mock` 返回 HTTP 200，Java `/api/agent/ask` 返回 HTTP 200 和 `traceId`，Trace 查询返回 HTTP 200 并包含 `repo_search_mock`。
+- 阶段 3 验证中发现 Java mock 模式无 Key 启动失败，已在 `application.yml` 将 Spring AI 模型 provider 默认设为 `none`，后续真实 DeepSeek 接入时再显式启用。
 
 ## 遗留问题
 
 - Git 已可用；后续如需同步 GitHub，还需要创建远端仓库并配置 `origin`。
-- 需要安装 Go 后补跑 `gofmt -w cmd internal`、`go test ./...`、`go run ./cmd/server`。
 - Redis adapter、Spring AI Tool Calling、MyBatis-Plus Mapper 持久化和真实 GitHub API 完整验证建议拆后续 change。

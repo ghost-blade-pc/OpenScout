@@ -44,5 +44,9 @@ curl -X POST http://localhost:8080/api/agent/ask -H 'Content-Type: application/j
 | 2026-05-29 | `docker compose -f deploy/docker-compose.yml config` | 通过 | Compose YAML 和 MySQL/Redis 服务配置可解析 |
 | 2026-05-29 | `cd openscout-repo-collector && go version` | 失败 | `/bin/bash: line 1: go: command not found`，本机未安装 Go |
 | 2026-05-29 | `cd openscout-repo-collector && gofmt -w cmd internal` | 失败 | `/bin/bash: line 1: gofmt: command not found`，本机未安装 Go |
-| 2026-05-29 | `cd openscout-repo-collector && go test ./...` | 未执行 | 依赖 Go 工具链，需安装 Go 后补跑 |
-| 2026-05-29 | curl mock/ask 接口 | 未执行 | 未启动长驻 Java/Go 服务；接口契约和 README 已创建 |
+| 2026-05-30 | `cd openscout-repo-collector && go test ./...` | 通过 | 阶段 2/3 使用项目本地 Go 工具链补跑，`internal/cache`、`internal/service` 测试通过 |
+| 2026-05-30 | `curl http://localhost:8081/health` | 通过 | 阶段 3 回填验证，HTTP 200，`status=UP` |
+| 2026-05-30 | `curl http://localhost:8081/api/repos/mock` | 通过 | 阶段 3 回填验证，HTTP 200，返回 3 个 mock 项目 |
+| 2026-05-30 | `curl -X POST http://localhost:8080/api/agent/ask ...` | 通过 | 阶段 3 回填验证，HTTP 200，返回 `traceId`、3 个推荐项目和评分 |
+| 2026-05-30 | `curl http://localhost:8080/api/agent/traces/<traceId>` | 通过 | 阶段 3 回填验证，HTTP 200，包含 `repo_search_mock` 工具调用 |
+| 2026-05-30 | 停止 Go 后调用 Java `/api/agent/ask` | 通过 | 阶段 3 回填验证，HTTP 502，返回失败 traceId 和 `Connection refused` 摘要 |

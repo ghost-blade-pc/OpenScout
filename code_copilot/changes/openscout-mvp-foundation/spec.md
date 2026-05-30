@@ -1,5 +1,5 @@
 # OpenScout MVP 基础骨架与核心推荐闭环
-> status: apply
+> status: done
 > created: 2026-05-29
 > complexity: 复杂
 
@@ -87,7 +87,7 @@ propose 阶段没有应用源码、构建文件、配置文件或测试文件；
 
 ## 3. 功能点
 
-- [x] 功能 1：本地环境启动。Docker Compose 配置已创建并通过 `docker compose config` 校验；Java 服务可编译测试；Go 服务代码已创建但本机缺少 Go 工具链，启动待安装 Go 后验证。
+- [x] 功能 1：本地环境启动。Docker Compose 配置已创建并通过 `docker compose config` 校验；Java 服务可编译测试；Go 服务代码已创建，后续阶段已补齐本地 Go 工具链并通过单测和 mock 服务启动验证。
 - [x] 功能 2：mock 端到端链路。Java `POST /api/agent/ask` 调 Go mock repo 接口，返回推荐项目、基础评分和 traceId。
 - [x] 功能 3：Go Collector 基础接口。提供 search/profile/readme/batch-profile 的 HTTP 合约和 mock/真实 API 可切换实现。
 - [x] 功能 4：基础评分。按活跃度、文档完整度、技术匹配度、学习友好度、简历价值生成分数和 evidence，并已有 Java 单测。

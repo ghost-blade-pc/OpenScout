@@ -36,7 +36,7 @@
 - **完成记录**：
   - 状态：已完成
   - 实际改动文件：`openscout-agent-server/`、`openscout-repo-collector/`、`deploy/docker-compose.yml`、`deploy/init.sql`、`README.md`、`.env.example`
-  - 验证结果：`docker compose -f deploy/docker-compose.yml config` 通过；Java `mvn test` 通过；Go 启动待安装 Go 后验证。
+  - 验证结果：`docker compose -f deploy/docker-compose.yml config` 初始阶段通过；Java `mvn test` 通过；Go 工具链、Go 单测和 mock 服务启动已在阶段 2/3 回填验证。
 
 ## Task 2: Go Collector mock 接口
 
@@ -62,9 +62,9 @@
   curl http://localhost:8081/api/repos/mock
   ```
 - **完成记录**：
-  - 状态：已完成，待 Go 工具链验证
+  - 状态：已完成
   - 实际改动文件：`openscout-repo-collector/cmd/server/main.go`、`internal/api/router.go`、`internal/service/`、`internal/model/`、`go.mod`
-  - 验证结果：`go version` 与 `gofmt -w cmd internal` 失败，原因是本机未安装 Go；代码已按预期接口创建。
+  - 验证结果：初始 apply 时本机未安装 Go；后续阶段 2 已补齐本地 Go 工具链并通过 `gofmt`、`go test ./...`；阶段 3 已启动 Go 服务并通过 `/health`、`/api/repos/mock` curl 验证。
 
 ## Task 3: Java Agent Server mock 链路
 
@@ -174,9 +174,9 @@
   go test ./...
   ```
 - **完成记录**：
-  - 状态：部分完成，Go 编译验证和 Redis adapter 延后
+  - 状态：部分完成，真实 GitHub API 完整验证和 Redis adapter 延后
   - 实际改动文件：`internal/github/client.go`、`internal/cache/memory.go`、`internal/limiter/limiter.go`、`internal/worker/pool.go`、`internal/api/router.go`
-  - 验证结果：本机缺少 Go，`go version` 和 `gofmt` 均不可用；真实 GitHub API 未在本机执行。
+  - 验证结果：后续阶段 2 已补齐 Go 工具链并通过 `go test ./...`；真实 GitHub API 未带 Token 实测，留给后续 `feature/04-github-real-api`。
 
 ## Task 7: README 与 Demo Case
 
@@ -204,7 +204,7 @@
 - **完成记录**：
   - 状态：已完成
   - 实际改动文件：`README.md`、`docs/api-contract.md`、`docs/demo-cases.md`、`docs/resume.md`
-  - 验证结果：README 中命令已与当前项目路径和接口对齐；未启动长驻服务执行 curl。
+  - 验证结果：README 中命令已与当前项目路径和接口对齐；阶段 3 已启动 Go/Java 长驻服务并完成 mock ask、Trace 查询和 Collector 不可用 502 场景验证。
 
 ## 变更摘要
 
@@ -213,5 +213,5 @@
 - **修改文件**：`spec.md`、`tasks.md`、`test-spec.md`、`log.md`、`code_copilot/rules/project-context.md`。
 - **删除文件**：无。
 - **Spec-Plan 偏差记录**：第一阶段 Go 缓存采用进程内 TTL cache，未接 Redis adapter；Java Trace 采用内存实现，数据库表先预留。
-- **未完成项**：Go 编译/格式化/单测需在安装 Go 后执行；长驻服务与 curl 端到端调用未启动验证；真实 GitHub API 未带 Token 实测。
-- **遗留风险**：Go 代码未经过编译器校验；真实 GitHub API 限流、Redis adapter、Spring AI Tool Calling 和持久化 Mapper 需要后续 change 补齐。
+- **未完成项**：真实 GitHub API 未带 Token 实测；Redis adapter、Spring AI Tool Calling 和 MyBatis-Plus Mapper 持久化未在本 change 完成。
+- **遗留风险**：真实 GitHub API 限流、Redis adapter、Spring AI Tool Calling 和持久化 Mapper 需要后续 change 补齐。

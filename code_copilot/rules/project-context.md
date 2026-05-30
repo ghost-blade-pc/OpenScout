@@ -66,7 +66,7 @@ alwaysApply: true
 - Go 本地运行命令：`cd openscout-repo-collector && go run ./cmd/server`。
 - Docker 配置校验命令：`docker compose -f deploy/docker-compose.yml config`。
 - 需要的本地依赖：JDK 17、Maven、Go、Docker、Docker Compose、GitHub Token 可选、DeepSeek API Key 可选。
-- 已知测试限制：当前机器没有 `go`/`gofmt`，Go 编译、格式化和单测需在安装 Go 后验证；真实 GitHub API 受限流影响，MVP 必须支持 mock 模式。
+- 已知测试限制：系统 PATH 不一定提供 `go`/`gofmt`，本仓库已提供项目本地 `.tools/go` 和 `scripts/use-local-tools.sh` 用于 Go 验证；真实 GitHub API 受限流影响，MVP 必须支持 mock 模式。
 
 ## 8. 待代码创建后回填
 
@@ -76,4 +76,4 @@ alwaysApply: true
 - Go 启动入口：`openscout-repo-collector/cmd/server/main.go`。
 - Go router/service/client/worker：`internal/api/router.go`、`internal/service/repo_service.go`、`internal/github/client.go`、`internal/worker/pool.go`。
 - 数据库 DDL：`deploy/init.sql`。
-- 典型测试类：`ProjectScoreServiceTest`、`TraceServiceTest`；Go 侧有 `repo_service_test.go`、`memory_test.go`，但当前机器未安装 Go，尚未执行。
+- 典型测试类：`ProjectScoreServiceTest`、`TraceServiceTest`；Go 侧已有 `repo_service_test.go`、`memory_test.go`，并已通过项目本地 Go 工具链执行。
