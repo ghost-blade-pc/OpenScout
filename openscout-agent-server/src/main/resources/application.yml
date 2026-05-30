@@ -11,7 +11,7 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver
   ai:
     model:
-      chat: ${SPRING_AI_MODEL_CHAT:openai}
+      chat: ${SPRING_AI_MODEL_CHAT:none}
       embedding: ${SPRING_AI_MODEL_EMBEDDING:none}
       image: ${SPRING_AI_MODEL_IMAGE:none}
       moderation: ${SPRING_AI_MODEL_MODERATION:none}
@@ -23,7 +23,7 @@ spring:
       base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
       chat:
         options:
-          model: ${DEEPSEEK_MODEL:deepseek-chat}
+          model: ${DEEPSEEK_MODEL:deepseek-v4-pro}
 
 openscout:
   collector-base-url: ${OPSCOUT_COLLECTOR_BASE_URL:http://localhost:8081}

@@ -34,6 +34,8 @@ public class AgentService {
 
     private static final Logger log = LoggerFactory.getLogger(AgentService.class);
     private static final int MAX_README_FETCH = 5;
+    /** 传给 LLM 回答生成的推荐数上限，控制 prompt 长度避免超时。 */
+    private static final int MAX_LLM_RECS = 5;
     private static final Pattern EXAMPLES_PATTERN = Pattern.compile(
             "(?i)\\b(example|sample|demo|tutorial|quickstart)\\b");
 
@@ -103,7 +105,9 @@ public class AgentService {
         persistReposIfEnabled(repos, recommendations, question);
 
         String scoreSummary = buildScoreSummary(recommendations);
-        String answer = answerGenerator.generate(question, recommendations, trace, traceService);
+        List<ProjectRecommendation> topForLlm = recommendations.size() > MAX_LLM_RECS
+                ? recommendations.subList(0, MAX_LLM_RECS) : recommendations;
+        String answer = answerGenerator.generate(question, topForLlm, trace, traceService);
         traceService.complete(trace, scoreSummary, answer);
         return new AgentAskResponse(trace.getTraceId(), answer, recommendations, trace.getLatencyMs());
     }
@@ -144,7 +148,9 @@ public class AgentService {
         persistReposIfEnabled(enriched, recommendations, question);
 
         String scoreSummary = buildScoreSummary(recommendations);
-        String answer = answerGenerator.generate(question, recommendations, trace, traceService);
+        List<ProjectRecommendation> topForLlm = recommendations.size() > MAX_LLM_RECS
+                ? recommendations.subList(0, MAX_LLM_RECS) : recommendations;
+        String answer = answerGenerator.generate(question, topForLlm, trace, traceService);
         traceService.complete(trace, scoreSummary, answer);
         return new AgentAskResponse(trace.getTraceId(), answer, recommendations, trace.getLatencyMs());
     }

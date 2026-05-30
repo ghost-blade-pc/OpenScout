@@ -1,20 +1,27 @@
 package com.openscout.config;
 
+import io.micrometer.observation.ObservationRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.ai.openai.OpenAiChatModel;
+import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.lang.Nullable;
+import org.springframework.retry.backoff.ExponentialBackOffPolicy;
+import org.springframework.retry.policy.SimpleRetryPolicy;
+import org.springframework.retry.support.RetryTemplate;
+import org.springframework.web.client.RestClient;
 
 /**
- * LLM (DeepSeek via OpenAI 协议) 配置。
+ * LLM (DeepSeek via OpenAI 协议) 手动配置。
  * <p>
- * 手动创建 {@link ChatClient} Bean，在 DEEPSEEK_API_KEY 缺失或 ChatModel 不可用时
- * 返回 null，由调用方（GoalInterpreter / AnswerGenerator）自行 fallback 到模板回答。
+ * 不依赖 Spring AI auto-config，全部手动创建以控制超时等参数。
+ * DEEPSEEK_API_KEY 缺失时 ChatClient Bean 返回 null，调用方自行 fallback。
  */
 @Configuration
 public class LlmConfig {
@@ -24,8 +31,11 @@ public class LlmConfig {
     @Value("${DEEPSEEK_API_KEY:}")
     private String apiKey;
 
-    @Autowired(required = false)
-    private ChatModel chatModel;
+    @Value("${DEEPSEEK_BASE_URL:https://api.deepseek.com}")
+    private String baseUrl;
+
+    @Value("${DEEPSEEK_MODEL:deepseek-v4-pro}")
+    private String model;
 
     @Bean
     @Nullable
@@ -34,11 +44,40 @@ public class LlmConfig {
             log.warn("DEEPSEEK_API_KEY not set — LLM features disabled, will use template answers");
             return null;
         }
-        if (chatModel == null) {
-            log.warn("ChatModel not available (check spring.ai.model.chat config) — LLM features disabled");
-            return null;
-        }
-        log.info("LLM ChatClient initialized with DeepSeek endpoint");
+
+        // Custom RestClient with 60s read timeout for LLM API calls
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(10_000);
+        requestFactory.setReadTimeout(60_000);
+        RestClient.Builder restClientBuilder = RestClient.builder()
+                .requestFactory(requestFactory);
+
+        OpenAiApi openAiApi = OpenAiApi.builder()
+                .baseUrl(baseUrl)
+                .apiKey(apiKey)
+                .restClientBuilder(restClientBuilder)
+                .build();
+
+        OpenAiChatOptions defaultOptions = OpenAiChatOptions.builder()
+                .model(model)
+                .build();
+
+        RetryTemplate retryTemplate = new RetryTemplate();
+        retryTemplate.setRetryPolicy(new SimpleRetryPolicy(1));
+        ExponentialBackOffPolicy backOff = new ExponentialBackOffPolicy();
+        backOff.setInitialInterval(1000);
+        backOff.setMultiplier(2.0);
+        backOff.setMaxInterval(5000);
+        retryTemplate.setBackOffPolicy(backOff);
+
+        OpenAiChatModel chatModel = OpenAiChatModel.builder()
+                .openAiApi(openAiApi)
+                .defaultOptions(defaultOptions)
+                .retryTemplate(retryTemplate)
+                .observationRegistry(ObservationRegistry.NOOP)
+                .build();
+
+        log.info("LLM ChatClient initialized: baseUrl={} model={}", baseUrl, model);
         return ChatClient.builder(chatModel).build();
     }
 }

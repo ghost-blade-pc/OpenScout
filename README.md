@@ -150,8 +150,8 @@ curl -X POST http://localhost:8080/api/agent/ask \
 启用 LLM：
 
 ```bash
+export SPRING_AI_MODEL_CHAT=openai
 export DEEPSEEK_API_KEY=<secret>
-# SPRING_AI_MODEL_CHAT 默认已设为 openai，无需额外设置
 ```
 
 强制禁用 LLM（使用模板回答）：
