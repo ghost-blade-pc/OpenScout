@@ -12,6 +12,7 @@
 - `code_copilot/changes/openscout-spring-ai-deepseek-agent/`：阶段 6 Spring AI + DeepSeek Agent 编排，`done`；包含 ChatClient 手动配置、GoalInterpreter/AnswerGenerator、AgentService 重命名、LLM fallback 策略、Trace 增强。
 - `code_copilot/changes/openscout-learning-plan/`：阶段 7 学习计划与任务持久化，`done`；包含 7 天学习任务生成、learning_goal/learning_task 持久化、`/api/agent/ask.learningPlan`、`/api/learning/*` 查询/状态更新、Trace 增强和真实 MySQL + curl 验证。
 - `code_copilot/changes/openscout-agent-runtime/`：阶段 8 Agent Runtime 内核，`done`；包含规则模板 Planner、PlanExecutor、Runtime 模型、AgentService 委托、Trace toolName 事件和 Runtime/Trace/AgentService 回归测试。
+- `code_copilot/changes/openscout-tool-runtime/`：阶段 9 Tool Runtime，`done`；包含 Java Agent Server 内部 Tool Runtime 契约、ToolRegistry/ToolExecutor、6 个固定 Tool、Trace `agent_tool_*` 事件、PlanExecutor 委托 Tool Runtime 和回归验证。
 
 ## 已沉淀知识
 
@@ -301,6 +302,59 @@ docker exec openscout-mysql mysql -uopenscout -popenscout openscout \
 - `cd openscout-repo-collector && go test ./...`：通过，使用项目本地 Go 工具链和本地 cache/path。
 - `docker compose -f deploy/docker-compose.yml config`：通过。
 
+## 阶段 9 Tool Runtime 知识（2026-05-31 实现完成）
+
+### Tool Runtime 边界
+
+- **文件**：`openscout-agent-server/src/main/java/com/openscout/agent/tool/`
+- 第一版 Tool Runtime 只作为 Java Agent Server 内部抽象，不新增公开 Tool API、Spring AI `@Tool`、MCP、SSE、RAG、ReAct、Verifier 或 Trace DDL。
+- Tool Runtime 只执行 `RuleBasedAgentPlanner` 生成的固定 `PlanStep.toolName`，不允许用户动态指定任意 Tool。
+- `PlanExecutor` 仍负责 plan/step 生命周期、`AgentContext` 串联、`StepObservation` 记录和最终 `AgentRuntimeResult` 构造；具体能力委托给 `ToolExecutor`。
+
+### 核心契约与注册执行
+
+- `AgentTool`：所有内部 Tool 实现的统一接口，包含 `toolName()` 和 `execute(ToolRequest)`。
+- `ToolRequest`：携带 `PlanStep`、`AgentContext`、`AgentTrace`。
+- `ToolResult`：携带 `PlanStepStatus`、`outputSummary`、`errorSummary`、`latencyMs`；成功通过 `ToolResult.success()` 创建，recoverable failure 通过 `ToolResult.recoverableFailure()` 创建。
+- `ToolRegistry`：从 Spring `List<AgentTool>` 构建 `toolName -> AgentTool` 映射，重复 toolName 直接抛 `IllegalStateException`，未知 toolName 抛 `unsupported tool`。
+- `ToolExecutor`：统一记录 `agent_tool_started`、`agent_tool_finished`、`agent_tool_failed`，并保留 fatal exception 的原始异常语义。
+
+### 固定 Tool 列表
+
+| toolName | 实现类 | 责任 |
+|---|---|---|
+| `interpret_goal` | `InterpretGoalTool` | 调用 `GoalInterpreter`，把用户目标解释为搜索关键词并写回 `AgentContext` |
+| `search_repos` | `SearchReposTool` | mock 模式调用 `fetchMockRepos`，real 模式调用 `searchRepos(..., "github")` |
+| `fetch_readme` | `FetchReadmeTool` | real 模式为 Top 5 repo 补充 README evidence；单项 404、限流或普通异常 best-effort 跳过 |
+| `score_projects` | `ScoreProjectsTool` | 使用 `ProjectScoreService` 生成规则评分和推荐排序，并保留 repo/analysis 持久化开关语义 |
+| `generate_learning_plan` | `GenerateLearningPlanTool` | 生成 7 天学习计划；持久化关闭或失败时返回临时计划，不中断 ask |
+| `generate_answer` | `GenerateAnswerTool` | 调用 `AnswerGenerator` 生成最终回答；LLM disabled 或失败时走模板 fallback |
+
+### Trace 事件约定
+
+- 用户已确认阶段 9 不新增 Trace DDL，继续复用 `TraceToolCall`。
+- 阶段 8 的 Runtime 事件保留：`agent_plan_created`、`agent_step_started`、`agent_step_finished`、`agent_observation_created`。
+- 阶段 9 新增 Tool Runtime 事件：
+  - `agent_tool_started`：记录 stepId、toolName、输入摘要。
+  - `agent_tool_finished`：记录 Tool 输出摘要、状态和耗时。
+  - `agent_tool_failed`：记录 Tool 输出摘要、错误摘要和耗时。
+- 所有 Tool 事件仍走 `TraceService.recordToolCall()`，因此继续复用 `sanitize()` 脱敏和 `openscout.trace.max-summary-length` 截断规则。
+- 不保存完整 README、完整 prompt、完整模型响应、GitHub Token、模型 Key 或大对象。
+
+### 失败与兼容策略
+
+- `search_repos` 等 fatal step 抛出的 `RateLimitException`、`CollectorUnavailableException`、`GitHubApiException` 会保留原异常语义，再由 `AgentService` 包装成既有 `AgentCallException` 响应。
+- `fetch_readme` 是可继续步骤；单个 README 获取失败只影响 enrichment，不阻断评分、学习计划和回答。
+- `generate_learning_plan` 的持久化失败属于 fallback，不阻断 ask；返回 `persisted=false` 的临时计划。
+- `/api/agent/ask` 响应兼容：保留 `traceId`、`answer`、`recommendations`、`learningPlan`、`latencyMs`。
+- Review 低风险残留：fatal exception 分支中 `agent_step_finished` / `agent_observation_created` 的 latency 仍为 0；对应 `agent_tool_failed` 已记录真实耗时。后续若做阶段 13 事件流或 Trace 精度增强，可统一 step/tool latency。
+
+### 验证证据
+
+- `cd openscout-agent-server && mvn test`：通过，34 tests。
+- `cd openscout-repo-collector && source ../scripts/use-local-tools.sh && go test ./...`：通过，使用项目本地 Go 1.26.3。
+- `docker compose -f deploy/docker-compose.yml config`：通过。
+
 ## 待沉淀主题
 
 - TODO: Spring AI Tool Calling（`@Tool` 注解）、Advisor、结构化输出与 DeepSeek V4 Pro 的实际版本和项目用法（Function Calling 兼容性待验证）。
@@ -311,6 +365,7 @@ docker exec openscout-mysql mysql -uopenscout -popenscout openscout \
 - TODO: OpenScout 项目评分公式和 evidence JSON 结构（当前评分规则硬编码在 `ProjectScoreService` 中）。
 - [x] Agent Trace 字段、脱敏策略和查询方式 → 已沉淀到阶段 4 知识。
 - [x] 学习计划生成、learning_goal/learning_task 持久化、任务状态 API → 已沉淀到阶段 7 知识。
+- [x] Java Agent Server 内部 Tool Runtime、固定 Tool、Trace `agent_tool_*` 事件 → 已沉淀到阶段 9 知识。
 
 ## 索引规则
 
