@@ -31,6 +31,17 @@ public class SearchReposTool implements AgentTool {
     @Override
     public ToolResult execute(ToolRequest request) {
         Instant toolStart = Instant.now();
+
+        // Memory 命中：context 已有 repos，跳过 Collector 调用
+        if (request.context().isMemoryHit() && !request.context().getRepos().isEmpty()) {
+            int repoCount = request.context().getRepos().size();
+            traceService.recordToolCall(request.trace(), "search_repos_skipped",
+                    "source=memory",
+                    "repos=" + repoCount,
+                    Duration.between(toolStart, Instant.now()).toMillis());
+            return ToolResult.success("skipped (memory hit) repos=" + repoCount);
+        }
+
         List<RepoSummary> repos;
         String keyword = request.context().keyword();
         if (request.context().getMode() == AgentRuntimeMode.MOCK) {

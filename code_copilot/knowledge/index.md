@@ -13,6 +13,7 @@
 - `code_copilot/changes/openscout-learning-plan/`：阶段 7 学习计划与任务持久化，`done`；包含 7 天学习任务生成、learning_goal/learning_task 持久化、`/api/agent/ask.learningPlan`、`/api/learning/*` 查询/状态更新、Trace 增强和真实 MySQL + curl 验证。
 - `code_copilot/changes/openscout-agent-runtime/`：阶段 8 Agent Runtime 内核，`done`；包含规则模板 Planner、PlanExecutor、Runtime 模型、AgentService 委托、Trace toolName 事件和 Runtime/Trace/AgentService 回归测试。
 - `code_copilot/changes/openscout-tool-runtime/`：阶段 9 Tool Runtime，`done`；包含 Java Agent Server 内部 Tool Runtime 契约、ToolRegistry/ToolExecutor、6 个固定 Tool、Trace `agent_tool_*` 事件、PlanExecutor 委托 Tool Runtime 和回归验证。
+- `code_copilot/changes/openscout-project-memory-rag/`：阶段 10 Project Memory / RAG，`done`；包含 ProjectMemoryService（MySQL LIKE 关键词搜索 + repo_analysis 缓存查询 + freshness 判断）、CheckMemoryTool（先于 search_repos 执行）、Planner 计划变更（mock 6 step / real 7 step）、SearchReposTool memory 跳过、FetchReadmeTool README 缓存命中（含 hasExamples 正则修复和 readmeLength 推断）、ScoreProjectsTool memory_writeback、7 个新 Trace 事件和 50 测试回归。
 
 ## 已沉淀知识
 
@@ -355,6 +356,68 @@ docker exec openscout-mysql mysql -uopenscout -popenscout openscout \
 - `cd openscout-repo-collector && source ../scripts/use-local-tools.sh && go test ./...`：通过，使用项目本地 Go 1.26.3。
 - `docker compose -f deploy/docker-compose.yml config`：通过。
 
+## 阶段 10 Project Memory / RAG 知识（2026-05-31 实现完成）
+
+### Project Memory 架构
+
+- **文件**：`openscout-agent-server/src/main/java/com/openscout/memory/ProjectMemoryService.java`
+- `ProjectMemoryService` 封装对 `repo_info` 和 `repo_analysis` 的只读查询，提供：
+  - `searchByKeyword(keyword)`：按空白字符拆分关键词，对 `full_name`、`description`、`language` 做 `LIKE '%word%'` OR 匹配。单单词最小长度 2 字符，最大返回 20 条。
+  - `getCachedAnalysis(fullName)`：按 `full_name` 查 `repo_analysis` 最新记录（`ORDER BY analyzed_at DESC LIMIT 1`）。
+  - `isFresh(recordTime, freshnessHours)`：按配置的 TTL 判断记录是否新鲜。
+  - 所有查询异常静默 fallback 为空，不阻塞 ask 主流程。
+- `isEnabled()` 需要 `memory.enabled=true` 且 `persistence.enabled=true` 才真正启用。
+
+### CheckMemoryTool — 新计划步骤
+
+- **文件**：`openscout-agent-server/src/main/java/com/openscout/agent/tool/CheckMemoryTool.java`
+- `check_memory` 步骤在 `interpret_goal` 之后、`search_repos` 之前执行，`continueOnFailure=true`。
+- 执行流程：keyword → `searchByKeyword` → 过滤 freshness → 新鲜非空则设 `context.setRepos()` + `context.setMemoryHit(true)`；空或过期则记录 miss。
+- Trace 事件：`memory_check`（disabled）、`memory_hit`（命中新鲜结果）、`memory_miss`（未命中或全部过期）。
+
+### 计划结构变更
+
+- **Mock**（6 step）：`interpret_goal → check_memory → search_repos → score_projects → generate_learning_plan → generate_answer`
+- **Real**（7 step）：`interpret_goal → check_memory → search_repos → fetch_readme → score_projects → generate_learning_plan → generate_answer`
+- `RuleBasedAgentPlanner` 使用 `idx++` 计数器替代旧的硬编码 `offset` 计算。
+
+### Memory 跳过与缓存逻辑
+
+- **SearchReposTool**：`isMemoryHit() && !getRepos().isEmpty()` 时跳过 Collector 调用，记录 `search_repos_skipped`。
+- **FetchReadmeTool**：每个 repo 先查 `getCachedAnalysis()` + `isFresh()`，命中则从 evidence 推断 `hasExamples` / `readmeLength`，跳过 GitHub；未命中走 `enrichWithReadme()`。
+  - `hasExamples` 推断：用正则 `\bexample[s]?\b` 等匹配 evidence 字符串（如 `"learning: examples directory found"`）。
+  - `readmeLength` 推断：`inferReadmeLength(evidence)` — `"README length >= 2000"` → 2000，`"README exists but is short"` → 500，否则 0。
+  - `hasDockerTopic(repo)` 提取为共享静态方法消除重复。
+- **ScoreProjectsTool**：`persistReposIfEnabled()` 增强为计数成功/失败数，记录 `memory_writeback` Trace 事件。
+
+### 配置约定
+
+| 环境变量 | YAML 键 | 默认值 | 用途 |
+|---|---|---|---|
+| `OPSCOUT_MEMORY_ENABLED` | `openscout.memory.enabled` | `true` | Memory 总开关 |
+| `OPSCOUT_MEMORY_FRESHNESS_HOURS` | `openscout.memory.freshness-hours` | `24` | 缓存新鲜度 TTL（小时） |
+
+### Trace 事件约定
+
+| 事件名 | 来源 Tool | 含义 |
+|---|---|---|
+| `memory_check` | CheckMemoryTool | memory disabled 或异常 |
+| `memory_hit` | CheckMemoryTool | 命中新鲜缓存 |
+| `memory_miss` | CheckMemoryTool | 未命中或全部过期 |
+| `search_repos_skipped` | SearchReposTool | 因 memory 命中跳过 Collector |
+| `readme_cache_hit` | FetchReadmeTool | 单 repo README 从缓存命中 |
+| `memory_writeback` | ScoreProjectsTool | 评分结果回写持久化完成 |
+
+所有 memory 事件继续复用 `TraceToolCall`，走 `sanitize()` 脱敏，不新增 DDL。
+
+### 已知约束
+
+- 第一版仅使用 MySQL `LIKE '%keyword%'` 关键词检索，不做向量/FULLTEXT。数据量 < 10000 行时性能可接受。
+- freshness TTL 全局单一阈值（默认 24h），不按维度（stars/README）做差异化。
+- `check_memory` 作为固定 Tool 插入计划，不开放动态 Tool 选择或用户指定 toolName。
+- N+1 DB 查询：`CheckMemoryTool` 对每个缓存 repo 做单次 `getCachedAnalysis()`，最多 20 次额外查询。MVP 数据量下无实际影响，后续可增加批量 `getCachedAnalyses(List<String>)` 方法。
+- `readmeLength` 从 evidence 推断而非存储原始值：长 README (>=2000) 能正确命中阈值，短 README (<2000) 使用 500 作为保守估算值。
+
 ## 待沉淀主题
 
 - TODO: Spring AI Tool Calling（`@Tool` 注解）、Advisor、结构化输出与 DeepSeek V4 Pro 的实际版本和项目用法（Function Calling 兼容性待验证）。
@@ -366,6 +429,7 @@ docker exec openscout-mysql mysql -uopenscout -popenscout openscout \
 - [x] Agent Trace 字段、脱敏策略和查询方式 → 已沉淀到阶段 4 知识。
 - [x] 学习计划生成、learning_goal/learning_task 持久化、任务状态 API → 已沉淀到阶段 7 知识。
 - [x] Java Agent Server 内部 Tool Runtime、固定 Tool、Trace `agent_tool_*` 事件 → 已沉淀到阶段 9 知识。
+- [x] Project Memory / RAG、MySQL LIKE 关键词检索、freshness 判断、memory hit/miss/write-back Trace 事件 → 已沉淀到阶段 10 知识。
 
 ## 索引规则
 

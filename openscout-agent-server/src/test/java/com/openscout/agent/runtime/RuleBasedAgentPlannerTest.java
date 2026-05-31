@@ -16,12 +16,17 @@ class RuleBasedAgentPlannerTest {
         assertThat(plan.getSteps()).extracting(PlanStep::getToolName)
                 .containsExactly(
                         "interpret_goal",
+                        "check_memory",
                         "search_repos",
                         "score_projects",
                         "generate_learning_plan",
                         "generate_answer"
                 );
         assertThat(plan.getSteps()).allMatch(step -> step.getStatus() == PlanStepStatus.PENDING);
+        assertThat(plan.getSteps())
+                .filteredOn(step -> "check_memory".equals(step.getToolName()))
+                .singleElement()
+                .matches(PlanStep::isContinueOnFailure);
     }
 
     @Test
@@ -32,6 +37,7 @@ class RuleBasedAgentPlannerTest {
         assertThat(plan.getSteps()).extracting(PlanStep::getToolName)
                 .containsExactly(
                         "interpret_goal",
+                        "check_memory",
                         "search_repos",
                         "fetch_readme",
                         "score_projects",

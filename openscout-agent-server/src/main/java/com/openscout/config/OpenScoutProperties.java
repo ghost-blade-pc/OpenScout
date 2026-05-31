@@ -12,6 +12,7 @@ public class OpenScoutProperties {
     private Learning learning = new Learning();
     private Persistence persistence = new Persistence();
     private Trace trace = new Trace();
+    private Memory memory = new Memory();
 
     public String getCollectorBaseUrl() {
         return collectorBaseUrl;
@@ -67,6 +68,14 @@ public class OpenScoutProperties {
 
     public void setTrace(Trace trace) {
         this.trace = trace;
+    }
+
+    public Memory getMemory() {
+        return memory;
+    }
+
+    public void setMemory(Memory memory) {
+        this.memory = memory;
     }
 
     public static class Llm {
@@ -141,6 +150,27 @@ public class OpenScoutProperties {
 
         public void setMaxSummaryLength(int maxSummaryLength) {
             this.maxSummaryLength = maxSummaryLength;
+        }
+    }
+
+    public static class Memory {
+        private boolean enabled = true;
+        private int freshnessHours = 24;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public int getFreshnessHours() {
+            return freshnessHours;
+        }
+
+        public void setFreshnessHours(int freshnessHours) {
+            this.freshnessHours = freshnessHours;
         }
     }
 }

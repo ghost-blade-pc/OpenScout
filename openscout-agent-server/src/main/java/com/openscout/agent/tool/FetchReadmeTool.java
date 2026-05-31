@@ -6,6 +6,7 @@ import com.openscout.client.GitHubApiException;
 import com.openscout.client.RateLimitException;
 import com.openscout.client.ReadmeResponse;
 import com.openscout.client.RepoSummary;
+import com.openscout.memory.ProjectMemoryService;
 import com.openscout.trace.TraceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,15 +25,19 @@ public class FetchReadmeTool implements AgentTool {
 
     private static final Logger log = LoggerFactory.getLogger(FetchReadmeTool.class);
     private static final int MAX_README_FETCH = 5;
+    /** 匹配 README 正文中的示例/教程关键词，支持单复数形式。 */
     private static final Pattern EXAMPLES_PATTERN = Pattern.compile(
-            "(?i)\\b(example|sample|demo|tutorial|quickstart)\\b");
+            "(?i)\\b(example[s]?|sample[s]?|demo[s]?|tutorial[s]?|quickstart)\\b");
 
     private final CollectorClient collectorClient;
     private final TraceService traceService;
+    private final ProjectMemoryService memoryService;
 
-    public FetchReadmeTool(CollectorClient collectorClient, TraceService traceService) {
+    public FetchReadmeTool(CollectorClient collectorClient, TraceService traceService,
+                           ProjectMemoryService memoryService) {
         this.collectorClient = collectorClient;
         this.traceService = traceService;
+        this.memoryService = memoryService;
     }
 
     @Override
@@ -51,8 +56,36 @@ public class FetchReadmeTool implements AgentTool {
         int targets = Math.min(repos.size(), MAX_README_FETCH);
         int fetched = 0;
         int skipped = 0;
+        int cacheHit = 0;
         for (int i = 0; i < targets; i++) {
-            EnrichedRepo result = enrichWithReadme(repos.get(i));
+            RepoSummary repo = repos.get(i);
+            // 先尝试 memory 缓存
+            if (memoryService.isEnabled()) {
+                var cached = memoryService.getCachedAnalysis(repo.fullName());
+                if (cached.isPresent() && memoryService.isFresh(cached.get().analyzedAt())) {
+                    // Memory 有新鲜分析记录，从 evidence 推断 hasExamples / readmeLength
+                    List<String> evidence = cached.get().evidence();
+                    boolean hasExamples = evidence.stream()
+                            .anyMatch(e -> EXAMPLES_PATTERN.matcher(e).find());
+                    int readmeLen = inferReadmeLength(evidence);
+                    boolean hasDocker = hasDockerTopic(repo);
+                    RepoSummary memRepo = new RepoSummary(
+                            repo.owner(), repo.repo(), repo.fullName(), repo.description(),
+                            repo.language(), repo.stars(), repo.forks(), repo.topics(),
+                            repo.license(), repo.openIssues(), repo.updatedAt(), repo.pushedAt(),
+                            readmeLen, hasExamples, hasDocker, "cache"
+                    );
+                    enriched.add(memRepo);
+                    cacheHit++;
+                    traceService.recordToolCall(request.trace(), "readme_cache_hit",
+                            "repo=" + repo.fullName(),
+                            "freshness=" + cached.get().analyzedAt(),
+                            0);
+                    continue;
+                }
+            }
+            // Memory 未命中或过期，调用 GitHub
+            EnrichedRepo result = enrichWithReadme(repo);
             enriched.add(result.repo());
             if (result.fetched()) {
                 fetched++;
@@ -67,9 +100,10 @@ public class FetchReadmeTool implements AgentTool {
         long latencyMs = Duration.between(start, Instant.now()).toMillis();
         traceService.recordToolCall(request.trace(), "readme_fetch_github",
                 "targets=" + targets,
-                "fetched=" + fetched + " skipped=" + skipped,
+                "fetched=" + fetched + " skipped=" + skipped + " cacheHit=" + cacheHit,
                 latencyMs);
-        return ToolResult.success("targets=" + targets + " fetched=" + fetched + " skipped=" + skipped);
+        return ToolResult.success("targets=" + targets + " fetched=" + fetched
+                + " skipped=" + skipped + " cacheHit=" + cacheHit);
     }
 
     private EnrichedRepo enrichWithReadme(RepoSummary repo) {
@@ -78,8 +112,7 @@ public class FetchReadmeTool implements AgentTool {
             String readmeText = readme.readme() != null ? readme.readme() : "";
             boolean hasExamples = EXAMPLES_PATTERN.matcher(
                     readmeText.substring(0, Math.min(2000, readmeText.length()))).find();
-            boolean hasDocker = repo.topics() != null && repo.topics().stream()
-                    .anyMatch(t -> "docker".equalsIgnoreCase(t));
+            boolean hasDocker = hasDockerTopic(repo);
             RepoSummary enriched = new RepoSummary(
                     repo.owner(), repo.repo(), repo.fullName(), repo.description(),
                     repo.language(), repo.stars(), repo.forks(), repo.topics(),
@@ -99,6 +132,37 @@ public class FetchReadmeTool implements AgentTool {
             log.warn("README fetch failed for {}, skipping enrichment: {}", repo.fullName(), e.getMessage());
             return new EnrichedRepo(repo, false);
         }
+    }
+
+    /**
+     * 从 scoring evidence 推断原始 README 长度。
+     *
+     * <p>当从 memory 缓存恢复时，原始 README 长度已丢失。
+     * 根据既有 evidence 字符串推断一个能命中评分阈值的最小值：</p>
+     * <ul>
+     *   <li>"docs: README length &gt;= 2000" → 2000（命中 docScore +12 和 learningScore +6 阈值）</li>
+     *   <li>"docs: README exists but is short" → 500（命中 docScore +6 阈值，但不到 1000/2000）</li>
+     *   <li>其他 → 0</li>
+     * </ul>
+     */
+    static int inferReadmeLength(List<String> evidence) {
+        if (evidence == null || evidence.isEmpty()) {
+            return 0;
+        }
+        for (String e : evidence) {
+            if (e.contains("README length >= 2000")) {
+                return 2000;
+            }
+            if (e.contains("README exists but is short")) {
+                return 500;
+            }
+        }
+        return 0;
+    }
+
+    private static boolean hasDockerTopic(RepoSummary repo) {
+        return repo.topics() != null && repo.topics().stream()
+                .anyMatch(t -> "docker".equalsIgnoreCase(t));
     }
 
     private record EnrichedRepo(RepoSummary repo, boolean fetched) {

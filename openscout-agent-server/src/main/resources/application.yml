@@ -38,6 +38,9 @@ openscout:
     enabled: ${OPSCOUT_LEARNING_ENABLED:true}
   persistence:
     enabled: ${OPSCOUT_PERSISTENCE_ENABLED:false}
+  memory:
+    enabled: ${OPSCOUT_MEMORY_ENABLED:true}
+    freshness-hours: ${OPSCOUT_MEMORY_FRESHNESS_HOURS:24}
   trace:
     max-summary-length: ${OPSCOUT_TRACE_MAX_SUMMARY_LENGTH:800}
 

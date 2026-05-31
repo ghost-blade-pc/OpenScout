@@ -1,6 +1,7 @@
 package com.openscout.agent.runtime;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.openscout.agent.tool.CheckMemoryTool;
 import com.openscout.agent.tool.FetchReadmeTool;
 import com.openscout.agent.tool.GenerateAnswerTool;
 import com.openscout.agent.tool.GenerateLearningPlanTool;
@@ -15,6 +16,7 @@ import com.openscout.client.GitHubApiException;
 import com.openscout.client.RepoSummary;
 import com.openscout.config.OpenScoutProperties;
 import com.openscout.learning.LearningPlanGenerator;
+import com.openscout.memory.ProjectMemoryService;
 import com.openscout.persistence.analysis.RepoAnalysisPersistenceService;
 import com.openscout.persistence.learning.LearningPlanPersistenceService;
 import com.openscout.persistence.repo.RepoPersistenceService;
@@ -47,15 +49,20 @@ class PlanExecutorTest {
         properties = new OpenScoutProperties();
         properties.getLlm().setEnabled(false);
         properties.getPersistence().setEnabled(false);
+        properties.getMemory().setEnabled(false); // 默认关闭 memory，避免干扰既有测试
         collectorClient = mock(CollectorClient.class);
         traceService = new TraceService(properties, null);
         ObjectMapper objectMapper = new ObjectMapper();
+        ProjectMemoryService memoryService = new ProjectMemoryService(
+                null, null, properties, objectMapper);
         ToolRegistry toolRegistry = new ToolRegistry(List.of(
                 new InterpretGoalTool(new com.openscout.agent.GoalInterpreter(properties, objectMapper), traceService),
+                new CheckMemoryTool(memoryService, traceService),
                 new SearchReposTool(collectorClient, traceService),
-                new FetchReadmeTool(collectorClient, traceService),
+                new FetchReadmeTool(collectorClient, traceService, memoryService),
                 new ScoreProjectsTool(new ProjectScoreService(), properties,
-                        mock(RepoPersistenceService.class), mock(RepoAnalysisPersistenceService.class)),
+                        mock(RepoPersistenceService.class), mock(RepoAnalysisPersistenceService.class),
+                        traceService),
                 new GenerateLearningPlanTool(properties,
                         new LearningPlanGenerator(properties, objectMapper),
                         mock(LearningPlanPersistenceService.class),
@@ -84,7 +91,7 @@ class PlanExecutorTest {
         assertThat(trace.getToolCalls()).extracting(TraceToolCall::toolName)
                 .contains("agent_plan_created", "agent_step_started", "agent_step_finished",
                         "agent_observation_created", "agent_tool_started", "agent_tool_finished",
-                        "repo_search_mock", "learning_plan_generate");
+                        "repo_search_mock", "learning_plan_generate", "memory_check");
     }
 
     @Test

@@ -17,6 +17,8 @@ public class AgentContext {
     private List<ProjectRecommendation> recommendations = new ArrayList<>();
     private LearningPlanResponse learningPlan;
     private String answer;
+    private boolean memoryHit;
+    private int memoryRepoCount;
 
     public AgentContext(String userGoal, AgentRuntimeMode mode) {
         this.userGoal = userGoal;
@@ -73,5 +75,21 @@ public class AgentContext {
 
     public void setAnswer(String answer) {
         this.answer = answer;
+    }
+
+    public boolean isMemoryHit() {
+        return memoryHit;
+    }
+
+    public void setMemoryHit(boolean memoryHit) {
+        this.memoryHit = memoryHit;
+    }
+
+    public int getMemoryRepoCount() {
+        return memoryRepoCount;
+    }
+
+    public void setMemoryRepoCount(int memoryRepoCount) {
+        this.memoryRepoCount = memoryRepoCount;
     }
 }
