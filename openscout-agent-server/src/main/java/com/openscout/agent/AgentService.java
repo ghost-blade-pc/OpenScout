@@ -1,76 +1,27 @@
 package com.openscout.agent;
 
-import com.openscout.client.CollectorClient;
-import com.openscout.client.GitHubApiException;
 import com.openscout.client.RateLimitException;
-import com.openscout.client.ReadmeResponse;
-import com.openscout.client.RepoSummary;
-import com.openscout.config.OpenScoutProperties;
-import com.openscout.learning.LearningPlanGenerator;
-import com.openscout.learning.LearningPlanResponse;
-import com.openscout.persistence.analysis.RepoAnalysisPersistenceService;
-import com.openscout.persistence.learning.LearningPlanPersistenceService;
-import com.openscout.persistence.repo.RepoPersistenceService;
-import com.openscout.scoring.ProjectScoreService;
+import com.openscout.agent.runtime.AgentRuntimeResult;
+import com.openscout.agent.runtime.PlanExecutor;
 import com.openscout.trace.AgentTrace;
 import com.openscout.trace.TraceService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-
-import java.time.Duration;
-import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.regex.Pattern;
 
 /**
  * OpenScout Agent 编排服务。
  * <p>
- * 根据 {@code openscout.mock-agent} 配置选择 mock 或真实 GitHub 数据源；
- * 根据 LLM 可用性选择自然语言生成或模板回答。
+ * 负责请求校验、Trace 生命周期和异常转换；具体计划和步骤执行委托给 Agent Runtime。
  * 原名 MockAgentService，阶段 6 重命名为 AgentService。
  */
 @Service
 public class AgentService {
 
-    private static final Logger log = LoggerFactory.getLogger(AgentService.class);
-    private static final int MAX_README_FETCH = 5;
-    /** 传给 LLM 回答生成的推荐数上限，控制 prompt 长度避免超时。 */
-    private static final int MAX_LLM_RECS = 5;
-    private static final Pattern EXAMPLES_PATTERN = Pattern.compile(
-            "(?i)\\b(example|sample|demo|tutorial|quickstart)\\b");
-
-    private final CollectorClient collectorClient;
-    private final ProjectScoreService scoreService;
     private final TraceService traceService;
-    private final OpenScoutProperties properties;
-    private final RepoPersistenceService repoPersistenceService;
-    private final RepoAnalysisPersistenceService repoAnalysisPersistenceService;
-    private final GoalInterpreter goalInterpreter;
-    private final AnswerGenerator answerGenerator;
-    private final LearningPlanGenerator learningPlanGenerator;
-    private final LearningPlanPersistenceService learningPlanPersistenceService;
+    private final PlanExecutor planExecutor;
 
-    public AgentService(CollectorClient collectorClient, ProjectScoreService scoreService,
-                        TraceService traceService, OpenScoutProperties properties,
-                        RepoPersistenceService repoPersistenceService,
-                        RepoAnalysisPersistenceService repoAnalysisPersistenceService,
-                        GoalInterpreter goalInterpreter,
-                        AnswerGenerator answerGenerator,
-                        LearningPlanGenerator learningPlanGenerator,
-                        LearningPlanPersistenceService learningPlanPersistenceService) {
-        this.collectorClient = collectorClient;
-        this.scoreService = scoreService;
+    public AgentService(TraceService traceService, PlanExecutor planExecutor) {
         this.traceService = traceService;
-        this.properties = properties;
-        this.repoPersistenceService = repoPersistenceService;
-        this.repoAnalysisPersistenceService = repoAnalysisPersistenceService;
-        this.goalInterpreter = goalInterpreter;
-        this.answerGenerator = answerGenerator;
-        this.learningPlanGenerator = learningPlanGenerator;
-        this.learningPlanPersistenceService = learningPlanPersistenceService;
+        this.planExecutor = planExecutor;
     }
 
     public AgentAskResponse ask(AgentAskRequest request) {
@@ -80,10 +31,10 @@ public class AgentService {
         }
         AgentTrace trace = traceService.start(question);
         try {
-            if (properties.isMockAgent()) {
-                return askMock(question, trace);
-            }
-            return askReal(question, trace);
+            AgentRuntimeResult result = planExecutor.execute(question, trace);
+            traceService.complete(trace, result.scoreSummary(), result.answer());
+            return new AgentAskResponse(trace.getTraceId(), result.answer(), result.recommendations(),
+                    result.learningPlan(), trace.getLatencyMs());
         } catch (RateLimitException ex) {
             traceService.fail(trace, ex);
             String msg = ex.getRetryAfterSeconds() > 0
@@ -94,174 +45,6 @@ public class AgentService {
             traceService.fail(trace, ex);
             throw new AgentCallException(trace.getTraceId(),
                     "Agent 执行失败，请检查 Go Collector 是否可用：" + ex.getMessage(), ex);
-        }
-    }
-
-    // ---- mock path ----
-
-    private AgentAskResponse askMock(String question, AgentTrace trace) {
-        // use LLM to interpret goal → search keywords
-        GoalInterpretation interpretation = goalInterpreter.interpret(question, trace, traceService);
-        String keyword = interpretation.keyword();
-
-        Instant toolStart = Instant.now();
-        List<RepoSummary> repos = collectorClient.fetchMockRepos(keyword);
-        long toolLatencyMs = Duration.between(toolStart, Instant.now()).toMillis();
-        traceService.recordToolCall(trace, "repo_search_mock",
-                "keyword=" + keyword, "items=" + repos.size(), toolLatencyMs);
-
-        List<ProjectRecommendation> recommendations = scoreAndRank(question, repos);
-        persistReposIfEnabled(repos, recommendations, question);
-
-        String scoreSummary = buildScoreSummary(recommendations);
-        LearningPlanResponse learningPlan = buildLearningPlan(question, recommendations, trace);
-        List<ProjectRecommendation> topForLlm = recommendations.size() > MAX_LLM_RECS
-                ? recommendations.subList(0, MAX_LLM_RECS) : recommendations;
-        String answer = answerGenerator.generate(question, topForLlm, trace, traceService);
-        traceService.complete(trace, scoreSummary, answer);
-        return new AgentAskResponse(trace.getTraceId(), answer, recommendations, learningPlan, trace.getLatencyMs());
-    }
-
-    // ---- real path ----
-
-    private AgentAskResponse askReal(String question, AgentTrace trace) {
-        // use LLM to interpret goal → search keywords
-        GoalInterpretation interpretation = goalInterpreter.interpret(question, trace, traceService);
-        String keyword = interpretation.keyword();
-
-        // Phase 1: search repos
-        Instant searchStart = Instant.now();
-        List<RepoSummary> repos = collectorClient.searchRepos(keyword, 10, "github");
-        long searchLatencyMs = Duration.between(searchStart, Instant.now()).toMillis();
-        traceService.recordToolCall(trace, "repo_search_github",
-                "keyword=" + keyword, "items=" + repos.size(), searchLatencyMs);
-
-        // Phase 2: fetch README for top N repos (best-effort)
-        List<RepoSummary> enriched = new ArrayList<>();
-        int readmeFetched = 0;
-        for (int i = 0; i < repos.size() && i < MAX_README_FETCH; i++) {
-            RepoSummary repo = repos.get(i);
-            RepoSummary enrichedRepo = enrichWithReadme(repo);
-            enriched.add(enrichedRepo);
-            if (enrichedRepo.readmeLength() > 0) {
-                readmeFetched++;
-            }
-        }
-        if (repos.size() > MAX_README_FETCH) {
-            enriched.addAll(repos.subList(MAX_README_FETCH, repos.size()));
-        }
-        traceService.recordToolCall(trace, "readme_fetch_github",
-                "targets=" + Math.min(repos.size(), MAX_README_FETCH),
-                "fetched=" + readmeFetched, 0);
-
-        List<ProjectRecommendation> recommendations = scoreAndRank(question, enriched);
-        persistReposIfEnabled(enriched, recommendations, question);
-
-        String scoreSummary = buildScoreSummary(recommendations);
-        LearningPlanResponse learningPlan = buildLearningPlan(question, recommendations, trace);
-        List<ProjectRecommendation> topForLlm = recommendations.size() > MAX_LLM_RECS
-                ? recommendations.subList(0, MAX_LLM_RECS) : recommendations;
-        String answer = answerGenerator.generate(question, topForLlm, trace, traceService);
-        traceService.complete(trace, scoreSummary, answer);
-        return new AgentAskResponse(trace.getTraceId(), answer, recommendations, learningPlan, trace.getLatencyMs());
-    }
-
-    private RepoSummary enrichWithReadme(RepoSummary repo) {
-        try {
-            ReadmeResponse readme = collectorClient.getReadme(repo.owner(), repo.repo(), "github");
-            boolean hasExamples = EXAMPLES_PATTERN.matcher(
-                    readme.readme() != null ? readme.readme().substring(0,
-                            Math.min(2000, readme.readme().length())) : "").find();
-            boolean hasDocker = repo.topics() != null && repo.topics().stream()
-                    .anyMatch(t -> "docker".equalsIgnoreCase(t));
-            return new RepoSummary(
-                    repo.owner(), repo.repo(), repo.fullName(), repo.description(),
-                    repo.language(), repo.stars(), repo.forks(), repo.topics(),
-                    repo.license(), repo.openIssues(), repo.updatedAt(), repo.pushedAt(),
-                    readme.length(), hasExamples, hasDocker, repo.source()
-            );
-        } catch (GitHubApiException e) {
-            log.warn("README fetch skipped for {}: code={} status={}",
-                    repo.fullName(), e.getErrorCode(), e.getHttpStatus());
-            return repo;
-        } catch (RateLimitException e) {
-            log.warn("README fetch skipped for {} due to rate limit (retry after {}s)",
-                    repo.fullName(), e.getRetryAfterSeconds());
-            return repo;
-        } catch (Exception e) {
-            log.warn("README fetch failed for {}, skipping enrichment: {}", repo.fullName(), e.getMessage());
-            return repo;
-        }
-    }
-
-    // ---- shared helpers ----
-
-    private List<ProjectRecommendation> scoreAndRank(String question, List<RepoSummary> repos) {
-        return repos.stream()
-                .map(repo -> ProjectRecommendation.from(repo, scoreService.score(question, repo), question))
-                .sorted(Comparator.comparing(
-                        (ProjectRecommendation item) -> item.score().totalScore()).reversed())
-                .toList();
-    }
-
-    private String buildScoreSummary(List<ProjectRecommendation> recommendations) {
-        return recommendations.stream()
-                .map(item -> item.fullName() + "=" + item.score().totalScore())
-                .reduce((left, right) -> left + ", " + right)
-                .orElse("no recommendations");
-    }
-
-    private LearningPlanResponse buildLearningPlan(String question, List<ProjectRecommendation> recommendations,
-                                                   AgentTrace trace) {
-        if (!properties.getLearning().isEnabled()) {
-            return null;
-        }
-        Instant generateStart = Instant.now();
-        LearningPlanResponse plan = learningPlanGenerator.generate(question, recommendations);
-        long generateLatencyMs = Duration.between(generateStart, Instant.now()).toMillis();
-        traceService.recordToolCall(trace, "learning_plan_generate",
-                "goal=" + question,
-                "tasks=" + plan.tasks().size(),
-                generateLatencyMs);
-
-        if (!properties.getPersistence().isEnabled() || plan.tasks().isEmpty()) {
-            traceService.recordToolCall(trace, "learning_plan_persist",
-                    "enabled=" + properties.getPersistence().isEnabled(),
-                    "persisted=false", 0);
-            return plan;
-        }
-        Instant persistStart = Instant.now();
-        try {
-            LearningPlanResponse persisted = learningPlanPersistenceService.savePlan(plan);
-            traceService.recordToolCall(trace, "learning_plan_persist",
-                    "goalId=" + persisted.goalId(),
-                    "persisted=true tasks=" + persisted.tasks().size(),
-                    Duration.between(persistStart, Instant.now()).toMillis());
-            return persisted;
-        } catch (Exception e) {
-            log.warn("learning plan 持久化失败，返回临时计划：{}", e.getMessage());
-            traceService.recordToolCall(trace, "learning_plan_persist",
-                    "goal=" + question,
-                    "persisted=false error=" + e.getMessage(),
-                    Duration.between(persistStart, Instant.now()).toMillis());
-            return plan;
-        }
-    }
-
-    private void persistReposIfEnabled(List<RepoSummary> repos, List<ProjectRecommendation> recommendations, String goal) {
-        if (!properties.getPersistence().isEnabled()) {
-            return;
-        }
-        for (int i = 0; i < repos.size(); i++) {
-            RepoSummary repo = repos.get(i);
-            ProjectRecommendation rec = recommendations.get(i);
-            try {
-                repoPersistenceService.upsertRepoInfo(repo);
-                String summary = "目标：" + goal + "；推荐理由：" + rec.reason();
-                repoAnalysisPersistenceService.saveAnalysis(repo.fullName(), rec.score(), summary);
-            } catch (Exception e) {
-                log.warn("repo 持久化失败 full_name={}: {}", repo.fullName(), e.getMessage());
-            }
         }
     }
 }

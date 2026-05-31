@@ -1,6 +1,9 @@
 package com.openscout.trace;
 
 import com.openscout.config.OpenScoutProperties;
+import com.openscout.agent.runtime.AgentPlan;
+import com.openscout.agent.runtime.PlanStep;
+import com.openscout.agent.runtime.StepObservation;
 import com.openscout.persistence.trace.TracePersistenceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,15 +41,52 @@ public class TraceService {
     }
 
     public void recordToolCall(AgentTrace trace, String toolName, String inputSummary, String outputSummary, long latencyMs) {
+        recordToolCall(trace, toolName, inputSummary, outputSummary, latencyMs, "SUCCESS", null);
+    }
+
+    public void recordToolCall(AgentTrace trace, String toolName, String inputSummary, String outputSummary,
+                               long latencyMs, String status, String errorMessage) {
         trace.getToolCalls().add(new TraceToolCall(
                 toolName,
                 sanitize(inputSummary),
                 sanitize(outputSummary),
                 latencyMs,
-                "SUCCESS",
-                null,
+                status,
+                sanitize(errorMessage),
                 Instant.now()
         ));
+    }
+
+    public void recordPlanCreated(AgentTrace trace, AgentPlan plan) {
+        recordToolCall(trace, "agent_plan_created",
+                "planId=" + plan.getPlanId(),
+                "mode=" + plan.getMode() + " steps=" + plan.getSteps().size(),
+                0);
+    }
+
+    public void recordStepStarted(AgentTrace trace, PlanStep step) {
+        recordToolCall(trace, "agent_step_started",
+                "stepId=" + step.getStepId() + " tool=" + step.getToolName(),
+                "purpose=" + step.getPurpose(),
+                0);
+    }
+
+    public void recordStepFinished(AgentTrace trace, PlanStep step, StepObservation observation) {
+        recordToolCall(trace, "agent_step_finished",
+                "stepId=" + step.getStepId() + " tool=" + step.getToolName(),
+                "status=" + observation.status(),
+                observation.latencyMs(),
+                observation.status().name(),
+                observation.errorSummary());
+    }
+
+    public void recordObservation(AgentTrace trace, StepObservation observation) {
+        recordToolCall(trace, "agent_observation_created",
+                "stepId=" + observation.stepId() + " tool=" + observation.toolName(),
+                observation.outputSummary(),
+                observation.latencyMs(),
+                observation.status().name(),
+                observation.errorSummary());
     }
 
     public void complete(AgentTrace trace, String scoreSummary, String finalAnswer) {

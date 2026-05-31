@@ -4,7 +4,7 @@ OpenScout Agent 是一个面向开发者的开源项目情报分析与学习路�
 
 ## 当前范围
 
-- Java 17 + Spring Boot + MyBatis-Plus：提供 `/api/agent/ask`，执行 mock Agent 编排、规则评分和 Trace。
+- Java 17 + Spring Boot + MyBatis-Plus：提供 `/api/agent/ask`，通过 Agent Runtime 执行 mock/real 编排、规则评分、学习计划和 Trace。
 - Go 1.22 + Gin：提供 Repo Collector 接口，支持 mock 模式和可选 GitHub API 模式。
 - MySQL + Redis：通过 Docker Compose 提供本地依赖；**持久化默认关闭**，启用方式见下方"持久化"章节。
 - Spring AI + DeepSeek V4 Pro：配置位已预留，后续阶段再接真实 Tool Calling。
@@ -177,6 +177,33 @@ Spring AI 模型默认不启用，避免 mock 演示在未配置 Key 时启动�
 export SPRING_AI_MODEL_CHAT=openai
 export DEEPSEEK_API_KEY=<secret>
 ```
+
+## Agent Runtime（阶段 8）
+
+`/api/agent/ask` 当前通过规则模板 Agent Runtime 执行固定计划。第一版 Runtime 只显式化现有链路，不引入动态 Tool Calling、RAG、SSE、前端或生产鉴权。
+
+mock 模式计划：
+
+```text
+interpret_goal -> search_repos -> score_projects -> generate_learning_plan -> generate_answer
+```
+
+真实 GitHub 模式计划：
+
+```text
+interpret_goal -> search_repos -> fetch_readme -> score_projects -> generate_learning_plan -> generate_answer
+```
+
+Trace 中会通过 `TraceToolCall.toolName` 事件记录 Runtime 过程：
+
+| toolName | 含义 |
+|---|---|
+| `agent_plan_created` | 计划创建，包含 planId、mode 和 step 数 |
+| `agent_step_started` | 单个 step 开始执行 |
+| `agent_step_finished` | 单个 step 执行完成或失败 |
+| `agent_observation_created` | step observation 摘要 |
+
+这些事件仍复用既有 Trace 脱敏和长度截断规则，不新增数据库表或 DDL。`/api/agent/ask` 响应字段保持兼容。
 
 ## 学习计划（阶段 7）
 
