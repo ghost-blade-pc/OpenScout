@@ -178,6 +178,64 @@ export SPRING_AI_MODEL_CHAT=openai
 export DEEPSEEK_API_KEY=<secret>
 ```
 
+## 学习计划（阶段 7）
+
+`/api/agent/ask` 会在推荐结果中追加 `learningPlan` 字段，基于 Top 推荐项目和规则评分证据生成 7 天学习任务。学习计划默认启用，规则模板可在无模型 Key 时稳定生成；LLM 可用时只做文案增强，不修改评分和 evidence。
+
+关闭学习计划生成：
+
+```bash
+export OPSCOUT_LEARNING_ENABLED=false
+```
+
+默认持久化关闭时，`learningPlan.persisted=false`，计划只随本次响应返回：
+
+```json
+{
+  "learningPlan": {
+    "goalId": null,
+    "goal": "我想一周内学习 Spring AI Agent",
+    "targetStack": "Java",
+    "durationDays": 7,
+    "persisted": false,
+    "tasks": [
+      {
+        "id": null,
+        "dayNo": 1,
+        "title": "明确目标与项目范围",
+        "detail": "围绕用户目标阅读推荐项目 README、快速开始和目录结构...",
+        "expectedOutput": "写出项目定位、核心模块猜测和 3 个待验证问题。",
+        "status": "TODO"
+      }
+    ]
+  }
+}
+```
+
+启用 MySQL 持久化后，ask 会保存 `learning_goal` 和 `learning_task`，并返回可查询的 `goalId`：
+
+```bash
+export OPSCOUT_PERSISTENCE_ENABLED=true
+docker compose -f deploy/docker-compose.yml up -d mysql
+cd openscout-agent-server && mvn spring-boot:run
+```
+
+查询学习计划：
+
+```bash
+curl http://localhost:8080/api/learning/goals/<goalId>
+```
+
+更新任务状态：
+
+```bash
+curl -X PATCH http://localhost:8080/api/learning/tasks/<taskId>/status \
+  -H 'Content-Type: application/json' \
+  -d '{"status":"DONE"}'
+```
+
+任务状态只支持 `TODO`、`DOING`、`DONE`。`/api/learning/*` 当前是 MVP 本地 Demo 接口，未实现登录鉴权，不应直接公网暴露。
+
 ## 持久化（阶段 4）
 
 `agent_trace`、`repo_info`、`repo_analysis` 可通过 MyBatis-Plus 写入 MySQL。**持久化默认关闭**，以保持阶段 3 的纯 mock 演示不依赖 MySQL。

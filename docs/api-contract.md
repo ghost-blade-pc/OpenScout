@@ -39,6 +39,23 @@ Response (200):
       "reason": "..."
     }
   ],
+  "learningPlan": {
+    "goalId": null,
+    "goal": "我想一周内学习 Spring AI Agent",
+    "targetStack": "Java",
+    "durationDays": 7,
+    "persisted": false,
+    "tasks": [
+      {
+        "id": null,
+        "dayNo": 1,
+        "title": "明确目标与项目范围",
+        "detail": "围绕用户目标阅读推荐项目 README、快速开始和目录结构...",
+        "expectedOutput": "写出项目定位、核心模块猜测和 3 个待验证问题。",
+        "status": "TODO"
+      }
+    ]
+  },
   "latencyMs": 42
 }
 ```
@@ -57,6 +74,61 @@ Error (502 Bad Gateway):
 ### GET `/api/agent/traces/{traceId}`
 
 仅用于本地演示和排障。后续如果暴露到非本地环境，需要补鉴权和审计。
+
+### GET `/api/learning/goals/{goalId}`
+
+查询已持久化的学习目标和 7 天任务。仅当 `OPSCOUT_PERSISTENCE_ENABLED=true` 且 `/api/agent/ask` 返回 `learningPlan.persisted=true` 时有可查询数据。
+
+Response (200):
+
+```json
+{
+  "goalId": 1,
+  "goal": "我想一周内学习 Spring AI Agent",
+  "targetStack": "Java",
+  "durationDays": 7,
+  "persisted": true,
+  "tasks": [
+    {
+      "id": 10,
+      "dayNo": 1,
+      "title": "明确目标与项目范围",
+      "detail": "围绕用户目标阅读推荐项目 README、快速开始和目录结构...",
+      "expectedOutput": "写出项目定位、核心模块猜测和 3 个待验证问题。",
+      "status": "TODO"
+    }
+  ]
+}
+```
+
+不存在时返回 404。
+
+### PATCH `/api/learning/tasks/{taskId}/status`
+
+更新单个学习任务状态。状态只允许 `TODO`、`DOING`、`DONE`。
+
+Request:
+
+```json
+{
+  "status": "DONE"
+}
+```
+
+Response (200):
+
+```json
+{
+  "id": 10,
+  "dayNo": 1,
+  "title": "明确目标与项目范围",
+  "detail": "围绕用户目标阅读推荐项目 README、快速开始和目录结构...",
+  "expectedOutput": "写出项目定位、核心模块猜测和 3 个待验证问题。",
+  "status": "DONE"
+}
+```
+
+非法状态返回 400；任务不存在返回 404。`/api/learning/*` 当前仅用于本地 Demo，未做登录鉴权，不应公网暴露。
 
 ## Go Repo Collector
 

@@ -10,13 +10,14 @@
 - `code_copilot/changes/openscout-mybatis-persistence/`：阶段 4 MyBatis-Plus 持久化，已归档为 `done`；包含 agent_trace/repo_info/repo_analysis Entity/Mapper/Service、持久化开关、内存+MySQL 双查、幂等 upsert、脱敏和 MySQL 集成验证。
 - `code_copilot/changes/openscout-github-real-api/`：阶段 5 GitHub 真实 API 集成，`done`；包含 Go 结构化错误、可配置参数、Java CollectorClient 真实方法、真实模式编排、Java 异常层级、双模式开关设计。
 - `code_copilot/changes/openscout-spring-ai-deepseek-agent/`：阶段 6 Spring AI + DeepSeek Agent 编排，`done`；包含 ChatClient 手动配置、GoalInterpreter/AnswerGenerator、AgentService 重命名、LLM fallback 策略、Trace 增强。
+- `code_copilot/changes/openscout-learning-plan/`：阶段 7 学习计划与任务持久化，`done`；包含 7 天学习任务生成、learning_goal/learning_task 持久化、`/api/agent/ask.learningPlan`、`/api/learning/*` 查询/状态更新、Trace 增强和真实 MySQL + curl 验证。
 
 ## 已沉淀知识
 
 - 阶段 3 mock e2e 的已验证闭环：Java `/api/agent/ask` 调 Go `/api/repos/mock`，返回 3 个 mock 推荐项目、规则评分和 `traceId`；随后 Java `/api/agent/traces/{traceId}` 可查到 `repo_search_mock` 工具调用摘要。
 - 阶段 3 失败分支已验证：停止 Go Collector 后调用 Java `/api/agent/ask` 返回 HTTP 502，并保留失败 `traceId` 和 `Connection refused` 错误摘要。
 - Spring AI 1.1.6 mock 模式约定：默认通过 `SPRING_AI_MODEL_* = none` 关闭模型 provider，避免无 Key 时 OpenAI 自动配置阻塞 Java 启动；真实 DeepSeek chat 接入时再显式设置 `SPRING_AI_MODEL_CHAT=openai` 和 `DEEPSEEK_API_KEY`。
-- 当前阶段结论边界：结果只证明本地 mock HTTP 链路、规则评分和内存 Trace 可演示；不证明真实 GitHub API、真实模型调用、Redis adapter 或 MyBatis Trace 持久化完成。
+- 阶段 3 结论边界：当时结果只证明本地 mock HTTP 链路、规则评分和内存 Trace 可演示；真实 GitHub API、真实模型调用和 MyBatis Trace 持久化已在后续阶段补齐，Redis adapter 仍未实现。
 
 ## 阶段 4 持久化知识（2026-05-30 集成验证通过）
 
@@ -204,6 +205,52 @@ docker exec openscout-mysql mysql -uopenscout -popenscout openscout \
 - DeepSeek V4 Pro 通过 OpenAI 兼容协议接入，base-url 指向 `https://api.deepseek.com`。
 - `DEEPSEEK_API_KEY` 仅通过环境变量传入，不在日志/Trace/代码中显式出现。
 
+## 阶段 7 学习计划与任务持久化知识（2026-05-31 实现完成）
+
+### 学习计划生成模式
+
+- **文件**：`openscout-agent-server/src/main/java/com/openscout/learning/LearningPlanGenerator.java`
+- 生成策略：规则模板为主，LLM 仅做任务文案增强；LLM 不可用、关闭、输出解析失败或 dayNo 不合规时自动 fallback 到规则模板。
+- 默认计划长度固定为 7 天，任务来源是用户目标、Top 推荐项目、评分结果和 evidence，不修改推荐排序或规则评分。
+- LLM JSON 提取支持 markdown 代码块包裹，避免模型返回 JSON fenced block 时解析失败。
+- 空推荐列表返回未持久化的空计划，不抛异常，保证 ask 主流程可演示。
+
+### 响应与配置契约
+
+- **文件**：`openscout-agent-server/src/main/java/com/openscout/agent/AgentAskResponse.java`、`openscout-agent-server/src/main/resources/application.yml`、`openscout-agent-server/src/main/java/com/openscout/config/OpenScoutProperties.java`
+- `/api/agent/ask` 追加可空字段 `learningPlan`，保留 `traceId`、`answer`、`recommendations`、`latencyMs` 的兼容性。
+- 配置键：`OPSCOUT_LEARNING_ENABLED` → `openscout.learning.enabled`，默认 `true`。
+- 持久化关闭或写入失败时仍返回学习计划，但 `learningPlan.persisted=false`、`goalId` 可为空；查询和状态更新只面向已持久化计划。
+
+### learning_goal / learning_task 持久化
+
+- **文件**：`openscout-agent-server/src/main/java/com/openscout/persistence/learning/`
+- `LearningGoalEntity`、`LearningTaskEntity`、`LearningGoalMapper`、`LearningTaskMapper`、`LearningPlanPersistenceService` 复用阶段 4 的 Entity + Mapper + Service 模式。
+- 本阶段不改 `deploy/init.sql`，复用既有 `learning_goal`、`learning_task` 表；推荐项目上下文写入任务文本和 `target_stack`。
+- 保存流程：先插入 goal，再插入 7 条 task；查询时按 `day_no` 升序返回；状态更新只接受枚举值。
+
+### 学习计划 API
+
+- **文件**：`openscout-agent-server/src/main/java/com/openscout/learning/LearningController.java`
+- `GET /api/learning/goals/{goalId}`：返回已持久化目标和任务列表；不存在返回 404。
+- `PATCH /api/learning/tasks/{taskId}/status`：请求体 `{"status":"TODO|DOING|DONE"}`；非法状态返回 400，合法状态返回更新后的任务。
+- 当前接口无鉴权，只适合本地 Demo；公网暴露前必须补用户隔离和访问控制。
+
+### Trace 与验证证据
+
+- `AgentService` 在学习计划链路记录 `learning_plan_generate` 和 `learning_plan_persist` tool call 摘要；不记录完整 prompt、密钥或大对象。
+- 自动化验证：
+  - `cd openscout-agent-server && mvn test`：通过，22 tests。
+  - `cd openscout-repo-collector && source ../scripts/use-local-tools.sh && go test ./...`：通过，使用项目本地 Go 1.26.3。
+  - `docker compose -f deploy/docker-compose.yml config`：通过。
+- 真实环境验证：MySQL + Go Collector + Java Agent 长驻服务启动后，`POST /api/agent/ask` 返回 `learningPlan.persisted=true` 和 7 条任务；`GET /api/learning/goals/1` 返回 7 条任务；`PATCH /api/learning/tasks/1/status` 更新为 `DONE`；Trace 查询包含 `repo_search_mock`、`learning_plan_generate`、`learning_plan_persist`。
+
+### 已知约束
+
+- 阶段 7 不包含前端、日历提醒、复杂任务调度、多用户/多租户、登录鉴权、Redis 缓存、RAG、Streaming/SSE 或数据库迁移框架。
+- `learning_goal` 当前不显式关联 `trace_id` 或 repo 关系表；MVP 通过 `goalId` 查询，复杂关联和版本管理后续拆分。
+- LLM 学习计划增强只能做文案辅助，不能编造项目模块或覆盖规则评分结果。
+
 ## 待沉淀主题
 
 - TODO: Spring AI Tool Calling（`@Tool` 注解）、Advisor、结构化输出与 DeepSeek V4 Pro 的实际版本和项目用法（Function Calling 兼容性待验证）。
@@ -213,6 +260,7 @@ docker exec openscout-mysql mysql -uopenscout -popenscout openscout \
 - [x] Go Collector worker pool、rate limiter、cache 的实现约定 → 已沉淀到阶段 5 知识（可配置参数表）。
 - TODO: OpenScout 项目评分公式和 evidence JSON 结构（当前评分规则硬编码在 `ProjectScoreService` 中）。
 - [x] Agent Trace 字段、脱敏策略和查询方式 → 已沉淀到阶段 4 知识。
+- [x] 学习计划生成、learning_goal/learning_task 持久化、任务状态 API → 已沉淀到阶段 7 知识。
 
 ## 索引规则
 

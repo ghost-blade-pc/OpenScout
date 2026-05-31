@@ -9,6 +9,7 @@ public class OpenScoutProperties {
     private boolean mockAgent = true;
     private String collectorMode = "mock";
     private Llm llm = new Llm();
+    private Learning learning = new Learning();
     private Persistence persistence = new Persistence();
     private Trace trace = new Trace();
 
@@ -42,6 +43,14 @@ public class OpenScoutProperties {
 
     public void setLlm(Llm llm) {
         this.llm = llm;
+    }
+
+    public Learning getLearning() {
+        return learning;
+    }
+
+    public void setLearning(Learning learning) {
+        this.learning = learning;
     }
 
     public Persistence getPersistence() {
@@ -101,6 +110,18 @@ public class OpenScoutProperties {
 
     public static class Persistence {
         private boolean enabled = false;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+    }
+
+    public static class Learning {
+        private boolean enabled = true;
 
         public boolean isEnabled() {
             return enabled;

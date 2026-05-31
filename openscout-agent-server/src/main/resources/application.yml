@@ -34,6 +34,8 @@ openscout:
     timeout-seconds: ${OPSCOUT_LLM_TIMEOUT_SECONDS:30}
     max-tokens: ${OPSCOUT_LLM_MAX_TOKENS:2000}
     temperature: ${OPSCOUT_LLM_TEMPERATURE:0.7}
+  learning:
+    enabled: ${OPSCOUT_LEARNING_ENABLED:true}
   persistence:
     enabled: ${OPSCOUT_PERSISTENCE_ENABLED:false}
   trace:

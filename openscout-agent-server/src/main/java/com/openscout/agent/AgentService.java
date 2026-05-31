@@ -6,7 +6,10 @@ import com.openscout.client.RateLimitException;
 import com.openscout.client.ReadmeResponse;
 import com.openscout.client.RepoSummary;
 import com.openscout.config.OpenScoutProperties;
+import com.openscout.learning.LearningPlanGenerator;
+import com.openscout.learning.LearningPlanResponse;
 import com.openscout.persistence.analysis.RepoAnalysisPersistenceService;
+import com.openscout.persistence.learning.LearningPlanPersistenceService;
 import com.openscout.persistence.repo.RepoPersistenceService;
 import com.openscout.scoring.ProjectScoreService;
 import com.openscout.trace.AgentTrace;
@@ -47,13 +50,17 @@ public class AgentService {
     private final RepoAnalysisPersistenceService repoAnalysisPersistenceService;
     private final GoalInterpreter goalInterpreter;
     private final AnswerGenerator answerGenerator;
+    private final LearningPlanGenerator learningPlanGenerator;
+    private final LearningPlanPersistenceService learningPlanPersistenceService;
 
     public AgentService(CollectorClient collectorClient, ProjectScoreService scoreService,
                         TraceService traceService, OpenScoutProperties properties,
                         RepoPersistenceService repoPersistenceService,
                         RepoAnalysisPersistenceService repoAnalysisPersistenceService,
                         GoalInterpreter goalInterpreter,
-                        AnswerGenerator answerGenerator) {
+                        AnswerGenerator answerGenerator,
+                        LearningPlanGenerator learningPlanGenerator,
+                        LearningPlanPersistenceService learningPlanPersistenceService) {
         this.collectorClient = collectorClient;
         this.scoreService = scoreService;
         this.traceService = traceService;
@@ -62,6 +69,8 @@ public class AgentService {
         this.repoAnalysisPersistenceService = repoAnalysisPersistenceService;
         this.goalInterpreter = goalInterpreter;
         this.answerGenerator = answerGenerator;
+        this.learningPlanGenerator = learningPlanGenerator;
+        this.learningPlanPersistenceService = learningPlanPersistenceService;
     }
 
     public AgentAskResponse ask(AgentAskRequest request) {
@@ -105,11 +114,12 @@ public class AgentService {
         persistReposIfEnabled(repos, recommendations, question);
 
         String scoreSummary = buildScoreSummary(recommendations);
+        LearningPlanResponse learningPlan = buildLearningPlan(question, recommendations, trace);
         List<ProjectRecommendation> topForLlm = recommendations.size() > MAX_LLM_RECS
                 ? recommendations.subList(0, MAX_LLM_RECS) : recommendations;
         String answer = answerGenerator.generate(question, topForLlm, trace, traceService);
         traceService.complete(trace, scoreSummary, answer);
-        return new AgentAskResponse(trace.getTraceId(), answer, recommendations, trace.getLatencyMs());
+        return new AgentAskResponse(trace.getTraceId(), answer, recommendations, learningPlan, trace.getLatencyMs());
     }
 
     // ---- real path ----
@@ -148,11 +158,12 @@ public class AgentService {
         persistReposIfEnabled(enriched, recommendations, question);
 
         String scoreSummary = buildScoreSummary(recommendations);
+        LearningPlanResponse learningPlan = buildLearningPlan(question, recommendations, trace);
         List<ProjectRecommendation> topForLlm = recommendations.size() > MAX_LLM_RECS
                 ? recommendations.subList(0, MAX_LLM_RECS) : recommendations;
         String answer = answerGenerator.generate(question, topForLlm, trace, traceService);
         traceService.complete(trace, scoreSummary, answer);
-        return new AgentAskResponse(trace.getTraceId(), answer, recommendations, trace.getLatencyMs());
+        return new AgentAskResponse(trace.getTraceId(), answer, recommendations, learningPlan, trace.getLatencyMs());
     }
 
     private RepoSummary enrichWithReadme(RepoSummary repo) {
@@ -198,6 +209,43 @@ public class AgentService {
                 .map(item -> item.fullName() + "=" + item.score().totalScore())
                 .reduce((left, right) -> left + ", " + right)
                 .orElse("no recommendations");
+    }
+
+    private LearningPlanResponse buildLearningPlan(String question, List<ProjectRecommendation> recommendations,
+                                                   AgentTrace trace) {
+        if (!properties.getLearning().isEnabled()) {
+            return null;
+        }
+        Instant generateStart = Instant.now();
+        LearningPlanResponse plan = learningPlanGenerator.generate(question, recommendations);
+        long generateLatencyMs = Duration.between(generateStart, Instant.now()).toMillis();
+        traceService.recordToolCall(trace, "learning_plan_generate",
+                "goal=" + question,
+                "tasks=" + plan.tasks().size(),
+                generateLatencyMs);
+
+        if (!properties.getPersistence().isEnabled() || plan.tasks().isEmpty()) {
+            traceService.recordToolCall(trace, "learning_plan_persist",
+                    "enabled=" + properties.getPersistence().isEnabled(),
+                    "persisted=false", 0);
+            return plan;
+        }
+        Instant persistStart = Instant.now();
+        try {
+            LearningPlanResponse persisted = learningPlanPersistenceService.savePlan(plan);
+            traceService.recordToolCall(trace, "learning_plan_persist",
+                    "goalId=" + persisted.goalId(),
+                    "persisted=true tasks=" + persisted.tasks().size(),
+                    Duration.between(persistStart, Instant.now()).toMillis());
+            return persisted;
+        } catch (Exception e) {
+            log.warn("learning plan 持久化失败，返回临时计划：{}", e.getMessage());
+            traceService.recordToolCall(trace, "learning_plan_persist",
+                    "goal=" + question,
+                    "persisted=false error=" + e.getMessage(),
+                    Duration.between(persistStart, Instant.now()).toMillis());
+            return plan;
+        }
     }
 
     private void persistReposIfEnabled(List<RepoSummary> repos, List<ProjectRecommendation> recommendations, String goal) {
