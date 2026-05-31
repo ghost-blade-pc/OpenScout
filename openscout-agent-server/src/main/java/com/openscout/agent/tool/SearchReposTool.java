@@ -1,0 +1,50 @@
+package com.openscout.agent.tool;
+
+import com.openscout.agent.runtime.AgentRuntimeMode;
+import com.openscout.client.CollectorClient;
+import com.openscout.client.RepoSummary;
+import com.openscout.trace.TraceService;
+import org.springframework.stereotype.Component;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+
+@Component
+public class SearchReposTool implements AgentTool {
+
+    public static final String NAME = "search_repos";
+
+    private final CollectorClient collectorClient;
+    private final TraceService traceService;
+
+    public SearchReposTool(CollectorClient collectorClient, TraceService traceService) {
+        this.collectorClient = collectorClient;
+        this.traceService = traceService;
+    }
+
+    @Override
+    public String toolName() {
+        return NAME;
+    }
+
+    @Override
+    public ToolResult execute(ToolRequest request) {
+        Instant toolStart = Instant.now();
+        List<RepoSummary> repos;
+        String keyword = request.context().keyword();
+        if (request.context().getMode() == AgentRuntimeMode.MOCK) {
+            repos = collectorClient.fetchMockRepos(keyword);
+            traceService.recordToolCall(request.trace(), "repo_search_mock",
+                    "keyword=" + keyword, "items=" + repos.size(),
+                    Duration.between(toolStart, Instant.now()).toMillis());
+        } else {
+            repos = collectorClient.searchRepos(keyword, 10, "github");
+            traceService.recordToolCall(request.trace(), "repo_search_github",
+                    "keyword=" + keyword, "items=" + repos.size(),
+                    Duration.between(toolStart, Instant.now()).toMillis());
+        }
+        request.context().setRepos(repos);
+        return ToolResult.success("items=" + repos.size());
+    }
+}

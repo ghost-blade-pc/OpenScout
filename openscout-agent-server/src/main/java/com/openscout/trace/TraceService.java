@@ -4,6 +4,7 @@ import com.openscout.config.OpenScoutProperties;
 import com.openscout.agent.runtime.AgentPlan;
 import com.openscout.agent.runtime.PlanStep;
 import com.openscout.agent.runtime.StepObservation;
+import com.openscout.agent.tool.ToolResult;
 import com.openscout.persistence.trace.TracePersistenceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -87,6 +88,31 @@ public class TraceService {
                 observation.latencyMs(),
                 observation.status().name(),
                 observation.errorSummary());
+    }
+
+    public void recordToolStarted(AgentTrace trace, PlanStep step) {
+        recordToolCall(trace, "agent_tool_started",
+                "stepId=" + step.getStepId() + " tool=" + step.getToolName(),
+                "input=" + step.getInputSummary(),
+                0);
+    }
+
+    public void recordToolFinished(AgentTrace trace, PlanStep step, ToolResult result, long latencyMs) {
+        recordToolCall(trace, "agent_tool_finished",
+                "stepId=" + step.getStepId() + " tool=" + step.getToolName(),
+                result.outputSummary(),
+                latencyMs,
+                result.status().name(),
+                result.errorSummary());
+    }
+
+    public void recordToolFailed(AgentTrace trace, PlanStep step, ToolResult result, long latencyMs) {
+        recordToolCall(trace, "agent_tool_failed",
+                "stepId=" + step.getStepId() + " tool=" + step.getToolName(),
+                result.outputSummary(),
+                latencyMs,
+                result.status().name(),
+                result.errorSummary());
     }
 
     public void complete(AgentTrace trace, String scoreSummary, String finalAnswer) {

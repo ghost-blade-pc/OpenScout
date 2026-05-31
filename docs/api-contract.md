@@ -84,7 +84,15 @@ Error (502 Bad Gateway):
 | `agent_step_finished` | 记录 step 状态和耗时 |
 | `agent_observation_created` | 记录 observation 摘要或错误摘要 |
 
-Runtime 事件只保存摘要和脱敏字段，不保存完整 README、完整 prompt、模型 Key 或 GitHub Token。
+阶段 9 起，Agent Runtime 内部通过 Tool Runtime 执行固定 step，并继续复用 `TraceToolCall` 记录 Tool 事件，不新增公开 Tool API 或 Trace DDL：
+
+| toolName | outputSummary / status |
+|---|---|
+| `agent_tool_started` | 记录 stepId、toolName 和输入摘要 |
+| `agent_tool_finished` | 记录 Tool 输出摘要、状态和耗时 |
+| `agent_tool_failed` | 记录 Tool 错误摘要，fatal 错误会继续向上返回既有错误响应 |
+
+Runtime 和 Tool 事件只保存摘要和脱敏字段，不保存完整 README、完整 prompt、完整模型响应、模型 Key 或 GitHub Token。
 
 ### GET `/api/learning/goals/{goalId}`
 

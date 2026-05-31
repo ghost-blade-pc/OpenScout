@@ -1,8 +1,14 @@
 package com.openscout.agent.runtime;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.openscout.agent.AnswerGenerator;
-import com.openscout.agent.GoalInterpreter;
+import com.openscout.agent.tool.FetchReadmeTool;
+import com.openscout.agent.tool.GenerateAnswerTool;
+import com.openscout.agent.tool.GenerateLearningPlanTool;
+import com.openscout.agent.tool.InterpretGoalTool;
+import com.openscout.agent.tool.ScoreProjectsTool;
+import com.openscout.agent.tool.SearchReposTool;
+import com.openscout.agent.tool.ToolExecutor;
+import com.openscout.agent.tool.ToolRegistry;
 import com.openscout.client.CollectorClient;
 import com.openscout.client.CollectorUnavailableException;
 import com.openscout.client.GitHubApiException;
@@ -43,18 +49,24 @@ class PlanExecutorTest {
         properties.getPersistence().setEnabled(false);
         collectorClient = mock(CollectorClient.class);
         traceService = new TraceService(properties, null);
+        ObjectMapper objectMapper = new ObjectMapper();
+        ToolRegistry toolRegistry = new ToolRegistry(List.of(
+                new InterpretGoalTool(new com.openscout.agent.GoalInterpreter(properties, objectMapper), traceService),
+                new SearchReposTool(collectorClient, traceService),
+                new FetchReadmeTool(collectorClient, traceService),
+                new ScoreProjectsTool(new ProjectScoreService(), properties,
+                        mock(RepoPersistenceService.class), mock(RepoAnalysisPersistenceService.class)),
+                new GenerateLearningPlanTool(properties,
+                        new LearningPlanGenerator(properties, objectMapper),
+                        mock(LearningPlanPersistenceService.class),
+                        traceService),
+                new GenerateAnswerTool(new com.openscout.agent.AnswerGenerator(properties), traceService)
+        ));
         executor = new PlanExecutor(
                 new RuleBasedAgentPlanner(),
-                collectorClient,
-                new ProjectScoreService(),
                 traceService,
                 properties,
-                mock(RepoPersistenceService.class),
-                mock(RepoAnalysisPersistenceService.class),
-                new GoalInterpreter(properties, new ObjectMapper()),
-                new AnswerGenerator(properties),
-                new LearningPlanGenerator(properties, new ObjectMapper()),
-                mock(LearningPlanPersistenceService.class)
+                new ToolExecutor(toolRegistry, traceService)
         );
     }
 
@@ -71,7 +83,8 @@ class PlanExecutorTest {
         assertThat(result.answer()).contains("已基于规则评分完成项目推荐");
         assertThat(trace.getToolCalls()).extracting(TraceToolCall::toolName)
                 .contains("agent_plan_created", "agent_step_started", "agent_step_finished",
-                        "agent_observation_created", "repo_search_mock", "learning_plan_generate");
+                        "agent_observation_created", "agent_tool_started", "agent_tool_finished",
+                        "repo_search_mock", "learning_plan_generate");
     }
 
     @Test
@@ -85,7 +98,7 @@ class PlanExecutorTest {
 
         assertThat(trace.getToolCalls())
                 .anySatisfy(call -> {
-                    assertThat(call.toolName()).isEqualTo("agent_observation_created");
+                    assertThat(call.toolName()).isIn("agent_tool_failed", "agent_observation_created");
                     assertThat(call.status()).isEqualTo("FAILED");
                     assertThat(call.errorMessage()).contains("collector down");
                 });

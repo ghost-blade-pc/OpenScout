@@ -4,7 +4,7 @@ OpenScout Agent 是一个面向开发者的开源项目情报分析与学习路�
 
 ## 当前范围
 
-- Java 17 + Spring Boot + MyBatis-Plus：提供 `/api/agent/ask`，通过 Agent Runtime 执行 mock/real 编排、规则评分、学习计划和 Trace。
+- Java 17 + Spring Boot + MyBatis-Plus：提供 `/api/agent/ask`，通过 Agent Runtime + Tool Runtime 执行 mock/real 编排、规则评分、学习计划和 Trace。
 - Go 1.22 + Gin：提供 Repo Collector 接口，支持 mock 模式和可选 GitHub API 模式。
 - MySQL + Redis：通过 Docker Compose 提供本地依赖；**持久化默认关闭**，启用方式见下方"持久化"章节。
 - Spring AI + DeepSeek V4 Pro：配置位已预留，后续阶段再接真实 Tool Calling。
@@ -180,7 +180,7 @@ export DEEPSEEK_API_KEY=<secret>
 
 ## Agent Runtime（阶段 8）
 
-`/api/agent/ask` 当前通过规则模板 Agent Runtime 执行固定计划。第一版 Runtime 只显式化现有链路，不引入动态 Tool Calling、RAG、SSE、前端或生产鉴权。
+`/api/agent/ask` 当前通过规则模板 Agent Runtime 执行固定计划。第一版 Runtime 只显式化现有链路，不引入 RAG、SSE、前端或生产鉴权。
 
 mock 模式计划：
 
@@ -204,6 +204,31 @@ Trace 中会通过 `TraceToolCall.toolName` 事件记录 Runtime 过程：
 | `agent_observation_created` | step observation 摘要 |
 
 这些事件仍复用既有 Trace 脱敏和长度截断规则，不新增数据库表或 DDL。`/api/agent/ask` 响应字段保持兼容。
+
+## Tool Runtime（阶段 9）
+
+阶段 9 将 Agent Runtime 的固定 step 标准化为 Java Agent Server 内部 Tool Runtime。Planner 仍只生成固定 toolName，用户不能动态指定任意 Tool；当前不新增公开 Tool API、Spring AI `@Tool`、MCP、SSE 或 Trace DDL。
+
+当前内部 Tool：
+
+| toolName | 责任 |
+|---|---|
+| `interpret_goal` | 将用户目标解释为搜索关键词 |
+| `search_repos` | 调用 Go Collector mock 或 GitHub search |
+| `fetch_readme` | 真实模式为 Top repo 补充 README 证据，单项失败 best-effort 跳过 |
+| `score_projects` | 通过规则评分生成推荐结果，LLM 不得覆盖分数 |
+| `generate_learning_plan` | 生成 7 天学习计划，持久化失败时返回临时计划 |
+| `generate_answer` | 基于规则评分生成最终回答，LLM 不可用时 fallback |
+
+Trace 继续复用 `TraceToolCall`，在阶段 8 的 plan/step/observation 事件之外追加 Tool Runtime 事件：
+
+| toolName | 含义 |
+|---|---|
+| `agent_tool_started` | Tool 开始执行，记录 stepId、toolName 和输入摘要 |
+| `agent_tool_finished` | Tool 成功完成，记录输出摘要和耗时 |
+| `agent_tool_failed` | Tool 失败或 recoverable failure，记录错误摘要 |
+
+Tool 输入输出只保存摘要和脱敏字段，不保存完整 README、完整 prompt、完整模型响应、模型 Key 或 GitHub Token。
 
 ## 学习计划（阶段 7）
 
