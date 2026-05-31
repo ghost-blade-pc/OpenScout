@@ -11,6 +11,7 @@
 - `code_copilot/changes/openscout-github-real-api/`：阶段 5 GitHub 真实 API 集成，`done`；包含 Go 结构化错误、可配置参数、Java CollectorClient 真实方法、真实模式编排、Java 异常层级、双模式开关设计。
 - `code_copilot/changes/openscout-spring-ai-deepseek-agent/`：阶段 6 Spring AI + DeepSeek Agent 编排，`done`；包含 ChatClient 手动配置、GoalInterpreter/AnswerGenerator、AgentService 重命名、LLM fallback 策略、Trace 增强。
 - `code_copilot/changes/openscout-learning-plan/`：阶段 7 学习计划与任务持久化，`done`；包含 7 天学习任务生成、learning_goal/learning_task 持久化、`/api/agent/ask.learningPlan`、`/api/learning/*` 查询/状态更新、Trace 增强和真实 MySQL + curl 验证。
+- `code_copilot/changes/openscout-agent-runtime/`：阶段 8 Agent Runtime 内核，`done`；包含规则模板 Planner、PlanExecutor、Runtime 模型、AgentService 委托、Trace toolName 事件和 Runtime/Trace/AgentService 回归测试。
 
 ## 已沉淀知识
 
@@ -250,6 +251,55 @@ docker exec openscout-mysql mysql -uopenscout -popenscout openscout \
 - 阶段 7 不包含前端、日历提醒、复杂任务调度、多用户/多租户、登录鉴权、Redis 缓存、RAG、Streaming/SSE 或数据库迁移框架。
 - `learning_goal` 当前不显式关联 `trace_id` 或 repo 关系表；MVP 通过 `goalId` 查询，复杂关联和版本管理后续拆分。
 - LLM 学习计划增强只能做文案辅助，不能编造项目模块或覆盖规则评分结果。
+
+## 阶段 8 Agent Runtime 内核知识（2026-05-31 实现完成）
+
+### Runtime 架构边界
+
+- **文件**：`openscout-agent-server/src/main/java/com/openscout/agent/runtime/`
+- 第一版 Runtime 是“显式化当前固定 ask 流程”，不是自主 Agent，不使用 LLM 动态规划。
+- `RuleBasedAgentPlanner` 生成固定计划：
+  - mock：`interpret_goal -> search_repos -> score_projects -> generate_learning_plan -> generate_answer`
+  - real：`interpret_goal -> search_repos -> fetch_readme -> score_projects -> generate_learning_plan -> generate_answer`
+- `PlanExecutor` 统一执行 mock/real 计划步骤，复用既有 `GoalInterpreter`、`CollectorClient`、`ProjectScoreService`、`LearningPlanGenerator`、`AnswerGenerator`。
+- `AgentService` 收敛为请求校验、Trace 生命周期和异常转换；具体执行委托给 `PlanExecutor`。
+
+### Runtime 模型
+
+- `AgentPlan`：包含 `planId`、`AgentRuntimeMode` 和步骤列表。
+- `PlanStep`：包含 `stepId`、`toolName`、`purpose`、`inputSummary`、`continueOnFailure` 和 `PlanStepStatus`。
+- `StepObservation`：包含 `stepId`、`toolName`、`status`、`outputSummary`、`errorSummary`、`latencyMs`。
+- `AgentContext`：保存一次 ask 的 userGoal、目标解释、repo 列表、推荐结果、学习计划和最终回答。
+- `AgentRuntimeResult`：返回 answer、recommendations、learningPlan 和 scoreSummary 给 `AgentService` 完成响应。
+
+### Trace toolName 事件约定
+
+- 用户已确认第一版不新增 Trace DDL，全部复用 `TraceToolCall` 承载 Runtime 事件。
+- `TraceService` 新增事件方法：
+  - `agent_plan_created`：记录 planId、mode、step 数。
+  - `agent_step_started`：记录 stepId、toolName、purpose。
+  - `agent_step_finished`：记录 step 状态和耗时。
+  - `agent_observation_created`：记录 observation 输出摘要或错误摘要。
+- Runtime 事件继续复用 `TraceService.sanitize()`，不保存完整 README、完整 prompt、模型 Key、GitHub Token 或大对象。
+- `complete()` / `fail()` 仍通过既有 `tool_calls_json` 一次性落库，未新增数据库字段。
+
+### 失败与兼容策略
+
+- `search_repos` 失败为不可继续步骤，会沿用 `RateLimitException` / `CollectorUnavailableException` / `AgentCallException` 语义。
+- `fetch_readme` 是可继续步骤；单个 README 404、限流或其他异常只记录跳过，不阻断评分、学习计划和回答。
+- `/api/agent/ask` 响应保持兼容：保留 `traceId`、`answer`、`recommendations`、`learningPlan`、`latencyMs`。
+- 阶段 8 不包含项目对比报告、前端、RAG、Project Memory、Evidence-aware ReAct、Reflection Verifier、SSE/Streaming、Spring AI Tool Calling、MCP、生产鉴权、多用户隔离或数据库迁移框架。
+
+### 修正的实现细节
+
+- 原 `AgentService.persistReposIfEnabled()` 按排序前 repos 下标取排序后 recommendations，存在 repo 和推荐结果错配风险。
+- 阶段 8 在 `PlanExecutor.persistReposIfEnabled()` 中按 `ProjectRecommendation.fullName` 建索引，再与 `RepoSummary.fullName` 匹配，避免排序后下标错配。
+
+### 验证证据
+
+- `cd openscout-agent-server && mvn test`：通过，29 tests。
+- `cd openscout-repo-collector && go test ./...`：通过，使用项目本地 Go 工具链和本地 cache/path。
+- `docker compose -f deploy/docker-compose.yml config`：通过。
 
 ## 待沉淀主题
 

@@ -75,6 +75,17 @@ Error (502 Bad Gateway):
 
 仅用于本地演示和排障。后续如果暴露到非本地环境，需要补鉴权和审计。
 
+阶段 8 起，Trace 的 `toolCalls` 会额外包含 Agent Runtime 事件，使用既有 `TraceToolCall` 结构承载，不新增独立 Trace API：
+
+| toolName | outputSummary / status |
+|---|---|
+| `agent_plan_created` | 记录 planId、mode、steps |
+| `agent_step_started` | 记录 stepId、toolName、purpose |
+| `agent_step_finished` | 记录 step 状态和耗时 |
+| `agent_observation_created` | 记录 observation 摘要或错误摘要 |
+
+Runtime 事件只保存摘要和脱敏字段，不保存完整 README、完整 prompt、模型 Key 或 GitHub Token。
+
 ### GET `/api/learning/goals/{goalId}`
 
 查询已持久化的学习目标和 7 天任务。仅当 `OPSCOUT_PERSISTENCE_ENABLED=true` 且 `/api/agent/ask` 返回 `learningPlan.persisted=true` 时有可查询数据。
