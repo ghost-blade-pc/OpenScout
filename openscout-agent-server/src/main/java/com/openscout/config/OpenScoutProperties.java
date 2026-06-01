@@ -14,6 +14,7 @@ public class OpenScoutProperties {
     private Trace trace = new Trace();
     private Memory memory = new Memory();
     private React react = new React();
+    private Verifier verifier = new Verifier();
 
     public String getCollectorBaseUrl() {
         return collectorBaseUrl;
@@ -85,6 +86,14 @@ public class OpenScoutProperties {
 
     public void setReact(React react) {
         this.react = react;
+    }
+
+    public Verifier getVerifier() {
+        return verifier;
+    }
+
+    public void setVerifier(Verifier verifier) {
+        this.verifier = verifier;
     }
 
     public static class Llm {
@@ -210,6 +219,27 @@ public class OpenScoutProperties {
 
         public void setMaxFollowUpRepos(int maxFollowUpRepos) {
             this.maxFollowUpRepos = maxFollowUpRepos;
+        }
+    }
+
+    public static class Verifier {
+        private boolean enabled = true;
+        private boolean llmEnabled = false;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public boolean isLlmEnabled() {
+            return llmEnabled;
+        }
+
+        public void setLlmEnabled(boolean llmEnabled) {
+            this.llmEnabled = llmEnabled;
         }
     }
 }

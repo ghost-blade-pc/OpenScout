@@ -21,7 +21,8 @@ class RuleBasedAgentPlannerTest {
                         "score_projects",
                         "evidence_react",
                         "generate_learning_plan",
-                        "generate_answer"
+                        "generate_answer",
+                        "verify_answer"
                 );
         assertThat(plan.getSteps()).allMatch(step -> step.getStatus() == PlanStepStatus.PENDING);
         assertThat(plan.getSteps())
@@ -44,7 +45,8 @@ class RuleBasedAgentPlannerTest {
                         "score_projects",
                         "evidence_react",
                         "generate_learning_plan",
-                        "generate_answer"
+                        "generate_answer",
+                        "verify_answer"
                 );
         assertThat(plan.getSteps())
                 .filteredOn(step -> "fetch_readme".equals(step.getToolName()))
@@ -52,6 +54,10 @@ class RuleBasedAgentPlannerTest {
                 .matches(PlanStep::isContinueOnFailure);
         assertThat(plan.getSteps())
                 .filteredOn(step -> "evidence_react".equals(step.getToolName()))
+                .singleElement()
+                .matches(PlanStep::isContinueOnFailure);
+        assertThat(plan.getSteps())
+                .filteredOn(step -> "verify_answer".equals(step.getToolName()))
                 .singleElement()
                 .matches(PlanStep::isContinueOnFailure);
     }

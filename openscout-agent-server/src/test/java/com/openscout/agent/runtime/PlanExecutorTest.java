@@ -11,6 +11,7 @@ import com.openscout.agent.tool.ScoreProjectsTool;
 import com.openscout.agent.tool.SearchReposTool;
 import com.openscout.agent.tool.ToolExecutor;
 import com.openscout.agent.tool.ToolRegistry;
+import com.openscout.agent.tool.VerifyAnswerTool;
 import com.openscout.agent.react.EvidenceGapDetector;
 import com.openscout.agent.react.ReadmeEvidenceEnricher;
 import com.openscout.agent.recommendation.RecommendationScoringService;
@@ -81,7 +82,8 @@ class PlanExecutorTest {
                         new LearningPlanGenerator(properties, objectMapper),
                         mock(LearningPlanPersistenceService.class),
                         traceService),
-                new GenerateAnswerTool(new com.openscout.agent.AnswerGenerator(properties), traceService)
+                new GenerateAnswerTool(new com.openscout.agent.AnswerGenerator(properties), traceService),
+                new VerifyAnswerTool(properties, traceService)
         ));
         executor = new PlanExecutor(
                 new RuleBasedAgentPlanner(),
@@ -106,7 +108,7 @@ class PlanExecutorTest {
                 .contains("agent_plan_created", "agent_step_started", "agent_step_finished",
                         "agent_observation_created", "agent_tool_started", "agent_tool_finished",
                         "repo_search_mock", "learning_plan_generate", "memory_check",
-                        "evidence_react_stopped");
+                        "evidence_react_stopped", "verify_completed");
     }
 
     @Test

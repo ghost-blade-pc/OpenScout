@@ -15,6 +15,7 @@
 - `code_copilot/changes/openscout-tool-runtime/`：阶段 9 Tool Runtime，`done`；包含 Java Agent Server 内部 Tool Runtime 契约、ToolRegistry/ToolExecutor、6 个固定 Tool、Trace `agent_tool_*` 事件、PlanExecutor 委托 Tool Runtime 和回归验证。
 - `code_copilot/changes/openscout-project-memory-rag/`：阶段 10 Project Memory / RAG，`done`；包含 ProjectMemoryService（MySQL LIKE 关键词搜索 + repo_analysis 缓存查询 + freshness 判断）、CheckMemoryTool（先于 search_repos 执行）、Planner 计划变更（mock 6 step / real 7 step）、SearchReposTool memory 跳过、FetchReadmeTool README 缓存命中（含 hasExamples 正则修复和 readmeLength 推断）、ScoreProjectsTool memory_writeback、7 个新 Trace 事件和 50 测试回归。
 - `code_copilot/changes/openscout-evidence-react/`：阶段 11 Evidence ReAct，`done`；包含 EvidenceGapDetector、ReadmeEvidenceEnricher、EvidenceReActTool、RecommendationScoringService、`openscout.react.*` 配置、Planner 插入 `evidence_react`、README-only 补查、重评分、同请求 README 失败去重、空 README `empty_readme` 处理、`fetch_readme` rate limit 停止语义，以及 70 测试回归。
+- `code_copilot/changes/openscout-reflection-verifier/`：阶段 12 Reflection Verifier，`done`；包含 VerifyAnswerTool、ScoreIntegrityChecker、EvidenceClaimsChecker、LearningPlanChecker、`openscout.verifier.*` 配置、Planner 插入 `verify_answer`、Trace `verify_completed` 事件，以及 28 个新增测试（总 98 tests）。
 
 ## 已沉淀知识
 
@@ -469,6 +470,47 @@ docker exec openscout-mysql mysql -uopenscout -popenscout openscout \
 - Review fix 已关闭：`fetch_readme` 失败后同请求不再重复补查同一 repo README；空 README 返回 `empty_readme`，不计为 fetched。
 - Review 复查 fix 已关闭：`FetchReadmeTool` rate limit 停止语义已补齐，当前无阶段 11 阻塞 deferred。
 
+## 阶段 12 Reflection Verifier 知识（2026-06-01 实现完成）
+
+### Verifier 架构
+
+- **文件**：`openscout-agent-server/src/main/java/com/openscout/agent/tool/VerifyAnswerTool.java`、`openscout-agent-server/src/main/java/com/openscout/agent/verifier/`
+- `verify_answer` 是固定 Tool，在 `generate_answer` 之后执行，`continueOnFailure=true`。
+- Planner 结构（阶段 12 最终）：
+  - Mock：`interpret_goal → check_memory → search_repos → score_projects → evidence_react → generate_learning_plan → generate_answer → verify_answer`
+  - Real：`interpret_goal → check_memory → search_repos → fetch_readme → score_projects → evidence_react → generate_learning_plan → generate_answer → verify_answer`
+
+### 三项规则检查
+
+| 检查器 | 文件 | 责任 |
+|---|---|---|
+| `ScoreIntegrityChecker` | `agent/verifier/ScoreIntegrityChecker.java` | 正则提取回答中分数数字，与 `ProjectScore.totalScore` 对比 |
+| `EvidenceClaimsChecker` | `agent/verifier/EvidenceClaimsChecker.java` | 检查回答声称的项目能力（文档完善/示例代码/生产级）是否有 evidence 支持 |
+| `LearningPlanChecker` | `agent/verifier/LearningPlanChecker.java` | 检查学习任务引用的仓库名是否在推荐列表中 |
+
+- 三项检查互不依赖，分别运行；单项异常不阻断其他检查。
+- 所有检查均不依赖 LLM（第一版 `llm-enabled=false`），纯规则化实现。
+- 发现问题产出 `VerificationIssue`（WARNING 或 ERROR 级别），但不修改回答。
+
+### 配置约定
+
+| 环境变量 | YAML 键 | 默认值 | 用途 |
+|---|---|---|---|
+| `OPSCOUT_VERIFIER_ENABLED` | `openscout.verifier.enabled` | `true` | Verifier 总开关 |
+| `OPSCOUT_VERIFIER_LLM_ENABLED` | `openscout.verifier.llm-enabled` | `false` | LLM 语义检查开关（第一版关闭） |
+
+### Trace 事件约定
+
+- `verify_completed`：记录三项检查结果摘要（`scoreIntegrity=ok/issues`、`evidenceClaims=ok/issues`、`learningPlan=ok/issues`）和 `allOk` 状态。
+- 所有 Verifier 事件继续复用 `TraceToolCall`，不新增 DDL。
+
+### 已知约束
+
+- 第一版只做规则检查，不做 LLM 语义检查（`llm-enabled=false`）。
+- Verifier 只报告问题到 Trace，不修改回答、不阻断 ask。
+- 分数提取依赖正则匹配中文评分格式，可能存在漏匹配；未匹配到时产生 `SCORE_FORMAT_UNRECOGNIZED` warning。
+- 证据声明检查使用启发式关键词匹配，存在误报风险。
+
 ## 待沉淀主题
 
 - TODO: Spring AI Tool Calling（`@Tool` 注解）、Advisor、结构化输出与 DeepSeek V4 Pro 的实际版本和项目用法（Function Calling 兼容性待验证）。
@@ -482,6 +524,7 @@ docker exec openscout-mysql mysql -uopenscout -popenscout openscout \
 - [x] Java Agent Server 内部 Tool Runtime、固定 Tool、Trace `agent_tool_*` 事件 → 已沉淀到阶段 9 知识。
 - [x] Project Memory / RAG、MySQL LIKE 关键词检索、freshness 判断、memory hit/miss/write-back Trace 事件 → 已沉淀到阶段 10 知识。
 - [x] Evidence ReAct、README-only 补查、有限轮数、gap/follow-up/observation Trace 事件 → 已沉淀到阶段 11 知识。
+- [x] Reflection Verifier、分数完整性/证据声明/学习计划三项规则自检、`verify_answer` Tool、`verify_completed` Trace 事件 → 已沉淀到阶段 12 知识。
 
 ## 索引规则
 

@@ -25,7 +25,8 @@ public class RuleBasedAgentPlanner {
         steps.add(new PlanStep("step-" + idx++, "evidence_react",
                 "基于评分证据缺口追加有限 README 补查", "source=recommendations", true));
         steps.add(new PlanStep("step-" + idx++, "generate_learning_plan", "基于 Top 推荐生成学习计划", "durationDays=7", true));
-        steps.add(new PlanStep("step-" + idx, "generate_answer", "基于规则评分生成最终回答", "source=recommendations", false));
+        steps.add(new PlanStep("step-" + idx++, "generate_answer", "基于规则评分生成最终回答", "source=recommendations", false));
+        steps.add(new PlanStep("step-" + idx, "verify_answer", "自检最终回答的分数完整性、证据声明和学习计划可行性", "source=answer+recommendations+learningPlan", true));
         return new AgentPlan("plan-" + UUID.randomUUID(), mode, steps);
     }
 
@@ -33,6 +34,6 @@ public class RuleBasedAgentPlanner {
         if (value == null) {
             return "";
         }
-        return value.length() <= 120 ? value : value.substring(0, 120);
+        return value.length() <= 120 ? value : value.substring(0, 120) + "...";
     }
 }
