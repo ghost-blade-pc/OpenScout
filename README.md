@@ -185,13 +185,13 @@ export DEEPSEEK_API_KEY=<secret>
 mock 模式计划：
 
 ```text
-interpret_goal -> search_repos -> score_projects -> generate_learning_plan -> generate_answer
+interpret_goal -> check_memory -> search_repos -> score_projects -> evidence_react -> generate_learning_plan -> generate_answer
 ```
 
 真实 GitHub 模式计划：
 
 ```text
-interpret_goal -> search_repos -> fetch_readme -> score_projects -> generate_learning_plan -> generate_answer
+interpret_goal -> check_memory -> search_repos -> fetch_readme -> score_projects -> evidence_react -> generate_learning_plan -> generate_answer
 ```
 
 Trace 中会通过 `TraceToolCall.toolName` 事件记录 Runtime 过程：
@@ -214,9 +214,11 @@ Trace 中会通过 `TraceToolCall.toolName` 事件记录 Runtime 过程：
 | toolName | 责任 |
 |---|---|
 | `interpret_goal` | 将用户目标解释为搜索关键词 |
+| `check_memory` | 检查 MySQL 中是否已有新鲜项目数据，命中时复用 |
 | `search_repos` | 调用 Go Collector mock 或 GitHub search |
 | `fetch_readme` | 真实模式为 Top repo 补充 README 证据，单项失败 best-effort 跳过 |
 | `score_projects` | 通过规则评分生成推荐结果，LLM 不得覆盖分数 |
+| `evidence_react` | 基于评分后的 evidence gap 追加有限 README 补查并重评分 |
 | `generate_learning_plan` | 生成 7 天学习计划，持久化失败时返回临时计划 |
 | `generate_answer` | 基于规则评分生成最终回答，LLM 不可用时 fallback |
 
@@ -229,6 +231,30 @@ Trace 继续复用 `TraceToolCall`，在阶段 8 的 plan/step/observation 事�
 | `agent_tool_failed` | Tool 失败或 recoverable failure，记录错误摘要 |
 
 Tool 输入输出只保存摘要和脱敏字段，不保存完整 README、完整 prompt、完整模型响应、模型 Key 或 GitHub Token。
+
+## Evidence ReAct（阶段 11）
+
+阶段 11 在 `score_projects` 之后加入 `evidence_react` 固定 Tool，用规则检测 Top 推荐项目的 evidence gap。第一版只补 README evidence，不调用 release、目录结构、issues 或其他额外 GitHub API；不引入动态 Tool 选择、Spring AI `@Tool`、MCP、SSE、Verifier 或 Trace DDL。
+
+默认配置：
+
+| 环境变量 | 默认值 | 说明 |
+|---|---|---|
+| `OPSCOUT_REACT_ENABLED` | `true` | 是否启用 Evidence ReAct |
+| `OPSCOUT_REACT_MAX_ROUNDS` | `1` | 最大补查轮数 |
+| `OPSCOUT_REACT_MAX_FOLLOW_UP_REPOS` | `3` | 单轮最多补查的 repo 数 |
+
+Trace 追加以下摘要事件：
+
+| toolName | 含义 |
+|---|---|
+| `evidence_gap_detected` | 记录本轮发现的 gap 数量、repo 和 gapType |
+| `evidence_follow_up_started` | 记录补查 action 和原因 |
+| `evidence_follow_up_observed` | 记录补查状态、README 长度、限流或错误摘要 |
+| `evidence_rescore_completed` | 补查成功后重新评分完成 |
+| `evidence_react_stopped` | 记录停止原因，如 disabled、mode_not_real、no_actionable_gap、rate_limited、max_rounds_reached |
+
+`evidence_react` 只增强证据，不允许 LLM 修改规则评分。GitHub 404 和普通单 repo 失败会降级为 observation；遇到限流会停止后续补查，但不破坏 `/api/agent/ask` 主流程。
 
 ## 学习计划（阶段 7）
 

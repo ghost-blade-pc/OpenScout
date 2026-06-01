@@ -19,6 +19,7 @@ class RuleBasedAgentPlannerTest {
                         "check_memory",
                         "search_repos",
                         "score_projects",
+                        "evidence_react",
                         "generate_learning_plan",
                         "generate_answer"
                 );
@@ -41,11 +42,16 @@ class RuleBasedAgentPlannerTest {
                         "search_repos",
                         "fetch_readme",
                         "score_projects",
+                        "evidence_react",
                         "generate_learning_plan",
                         "generate_answer"
                 );
         assertThat(plan.getSteps())
                 .filteredOn(step -> "fetch_readme".equals(step.getToolName()))
+                .singleElement()
+                .matches(PlanStep::isContinueOnFailure);
+        assertThat(plan.getSteps())
+                .filteredOn(step -> "evidence_react".equals(step.getToolName()))
                 .singleElement()
                 .matches(PlanStep::isContinueOnFailure);
     }

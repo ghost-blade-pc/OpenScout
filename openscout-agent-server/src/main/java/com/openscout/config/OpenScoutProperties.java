@@ -13,6 +13,7 @@ public class OpenScoutProperties {
     private Persistence persistence = new Persistence();
     private Trace trace = new Trace();
     private Memory memory = new Memory();
+    private React react = new React();
 
     public String getCollectorBaseUrl() {
         return collectorBaseUrl;
@@ -76,6 +77,14 @@ public class OpenScoutProperties {
 
     public void setMemory(Memory memory) {
         this.memory = memory;
+    }
+
+    public React getReact() {
+        return react;
+    }
+
+    public void setReact(React react) {
+        this.react = react;
     }
 
     public static class Llm {
@@ -171,6 +180,36 @@ public class OpenScoutProperties {
 
         public void setFreshnessHours(int freshnessHours) {
             this.freshnessHours = freshnessHours;
+        }
+    }
+
+    public static class React {
+        private boolean enabled = true;
+        private int maxRounds = 1;
+        private int maxFollowUpRepos = 3;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public int getMaxRounds() {
+            return maxRounds;
+        }
+
+        public void setMaxRounds(int maxRounds) {
+            this.maxRounds = maxRounds;
+        }
+
+        public int getMaxFollowUpRepos() {
+            return maxFollowUpRepos;
+        }
+
+        public void setMaxFollowUpRepos(int maxFollowUpRepos) {
+            this.maxFollowUpRepos = maxFollowUpRepos;
         }
     }
 }
