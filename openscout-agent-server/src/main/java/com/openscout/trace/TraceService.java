@@ -5,7 +5,9 @@ import com.openscout.agent.runtime.AgentPlan;
 import com.openscout.agent.runtime.PlanStep;
 import com.openscout.agent.runtime.StepObservation;
 import com.openscout.agent.tool.ToolResult;
+import com.openscout.agent.event.AgentEventPublisher;
 import com.openscout.persistence.trace.TracePersistenceService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -27,10 +29,19 @@ public class TraceService {
     private final Map<String, AgentTrace> traces = new ConcurrentHashMap<>();
     private final OpenScoutProperties properties;
     private final TracePersistenceService tracePersistenceService;
+    private final AgentEventPublisher eventPublisher;
 
-    public TraceService(OpenScoutProperties properties, TracePersistenceService tracePersistenceService) {
+    @Autowired
+    public TraceService(OpenScoutProperties properties,
+                        TracePersistenceService tracePersistenceService,
+                        AgentEventPublisher eventPublisher) {
         this.properties = properties;
         this.tracePersistenceService = tracePersistenceService;
+        this.eventPublisher = eventPublisher;
+    }
+
+    public TraceService(OpenScoutProperties properties, TracePersistenceService tracePersistenceService) {
+        this(properties, tracePersistenceService, null);
     }
 
     public AgentTrace start(String question) {
@@ -47,7 +58,7 @@ public class TraceService {
 
     public void recordToolCall(AgentTrace trace, String toolName, String inputSummary, String outputSummary,
                                long latencyMs, String status, String errorMessage) {
-        trace.getToolCalls().add(new TraceToolCall(
+        TraceToolCall toolCall = new TraceToolCall(
                 toolName,
                 sanitize(inputSummary),
                 sanitize(outputSummary),
@@ -55,7 +66,9 @@ public class TraceService {
                 status,
                 sanitize(errorMessage),
                 Instant.now()
-        ));
+        );
+        trace.getToolCalls().add(toolCall);
+        publishTraceEvent(trace, toolCall);
     }
 
     public void recordPlanCreated(AgentTrace trace, AgentPlan plan) {
@@ -164,4 +177,17 @@ public class TraceService {
         }
         return redacted.substring(0, maxLength) + "...<truncated>";
     }
+
+    private void publishTraceEvent(AgentTrace trace, TraceToolCall toolCall) {
+        if (eventPublisher == null) {
+            return;
+        }
+        try {
+            eventPublisher.publishTraceEvent(trace.getTraceId(), toolCall.toolName(), toolCall.inputSummary(),
+                    toolCall.outputSummary(), toolCall.latencyMs(), toolCall.status(), toolCall.errorMessage());
+        } catch (RuntimeException ex) {
+            log.warn("Agent 事件发布失败，Trace 继续记录：{}", ex.getMessage());
+        }
+    }
+
 }

@@ -5,9 +5,13 @@ import com.openscout.agent.AgentAskResponse;
 import com.openscout.agent.AgentCallException;
 import com.openscout.agent.AgentErrorResponse;
 import com.openscout.agent.AgentService;
+import com.openscout.agent.run.AgentRunCreateResponse;
+import com.openscout.agent.run.AgentRunResponse;
+import com.openscout.agent.run.AgentRunService;
 import com.openscout.client.RateLimitException;
 import com.openscout.trace.AgentTrace;
 import com.openscout.trace.TraceService;
+import org.springframework.http.MediaType;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -17,6 +21,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @RestController
 @RequestMapping("/api/agent")
@@ -24,10 +29,12 @@ public class AgentController {
 
     private final AgentService agentService;
     private final TraceService traceService;
+    private final AgentRunService agentRunService;
 
-    public AgentController(AgentService agentService, TraceService traceService) {
+    public AgentController(AgentService agentService, TraceService traceService, AgentRunService agentRunService) {
         this.agentService = agentService;
         this.traceService = traceService;
+        this.agentRunService = agentRunService;
     }
 
     @PostMapping("/ask")
@@ -38,6 +45,25 @@ public class AgentController {
     @GetMapping("/traces/{traceId}")
     public ResponseEntity<AgentTrace> getTrace(@PathVariable String traceId) {
         return traceService.find(traceId)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    @PostMapping("/runs")
+    public AgentRunCreateResponse createRun(@RequestBody AgentAskRequest request) {
+        return agentRunService.createRun(request);
+    }
+
+    @GetMapping("/runs/{runId}")
+    public ResponseEntity<AgentRunResponse> getRun(@PathVariable String runId) {
+        return agentRunService.findRun(runId)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    @GetMapping(value = "/runs/{runId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public ResponseEntity<SseEmitter> streamEvents(@PathVariable String runId) {
+        return agentRunService.subscribe(runId)
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
@@ -54,5 +80,11 @@ public class AgentController {
             builder.header("Retry-After", String.valueOf(rateLimitEx.getRetryAfterSeconds()));
         }
         return builder.body(new AgentErrorResponse(ex.getTraceId(), ex.getMessage()));
+    }
+
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<AgentErrorResponse> handleServiceUnavailable(IllegalStateException ex) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(new AgentErrorResponse(null, ex.getMessage()));
     }
 }

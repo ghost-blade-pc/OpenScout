@@ -15,6 +15,7 @@ public class OpenScoutProperties {
     private Memory memory = new Memory();
     private React react = new React();
     private Verifier verifier = new Verifier();
+    private Events events = new Events();
 
     public String getCollectorBaseUrl() {
         return collectorBaseUrl;
@@ -94,6 +95,14 @@ public class OpenScoutProperties {
 
     public void setVerifier(Verifier verifier) {
         this.verifier = verifier;
+    }
+
+    public Events getEvents() {
+        return events;
+    }
+
+    public void setEvents(Events events) {
+        this.events = events;
     }
 
     public static class Llm {
@@ -240,6 +249,72 @@ public class OpenScoutProperties {
 
         public void setLlmEnabled(boolean llmEnabled) {
             this.llmEnabled = llmEnabled;
+        }
+    }
+
+    public static class Events {
+        private boolean enabled = true;
+        private int sseTimeoutSeconds = 300;
+        private int bufferSize = 200;
+        private int maxActiveRuns = 20;
+        private int executorThreads = 4;
+        private int heartbeatSeconds = 15;
+        private int completedRetentionSeconds = 300;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public int getSseTimeoutSeconds() {
+            return sseTimeoutSeconds;
+        }
+
+        public void setSseTimeoutSeconds(int sseTimeoutSeconds) {
+            this.sseTimeoutSeconds = sseTimeoutSeconds;
+        }
+
+        public int getBufferSize() {
+            return bufferSize;
+        }
+
+        public void setBufferSize(int bufferSize) {
+            this.bufferSize = bufferSize;
+        }
+
+        public int getMaxActiveRuns() {
+            return maxActiveRuns;
+        }
+
+        public void setMaxActiveRuns(int maxActiveRuns) {
+            this.maxActiveRuns = maxActiveRuns;
+        }
+
+        public int getExecutorThreads() {
+            return executorThreads;
+        }
+
+        public void setExecutorThreads(int executorThreads) {
+            this.executorThreads = executorThreads;
+        }
+
+        public int getHeartbeatSeconds() {
+            return heartbeatSeconds;
+        }
+
+        public void setHeartbeatSeconds(int heartbeatSeconds) {
+            this.heartbeatSeconds = heartbeatSeconds;
+        }
+
+        public int getCompletedRetentionSeconds() {
+            return completedRetentionSeconds;
+        }
+
+        public void setCompletedRetentionSeconds(int completedRetentionSeconds) {
+            this.completedRetentionSeconds = completedRetentionSeconds;
         }
     }
 }

@@ -48,6 +48,14 @@ openscout:
   verifier:
     enabled: ${OPSCOUT_VERIFIER_ENABLED:true}
     llm-enabled: ${OPSCOUT_VERIFIER_LLM_ENABLED:false}
+  events:
+    enabled: ${OPSCOUT_EVENTS_ENABLED:true}
+    sse-timeout-seconds: ${OPSCOUT_EVENTS_SSE_TIMEOUT_SECONDS:300}
+    buffer-size: ${OPSCOUT_EVENTS_BUFFER_SIZE:200}
+    max-active-runs: ${OPSCOUT_EVENTS_MAX_ACTIVE_RUNS:20}
+    executor-threads: ${OPSCOUT_EVENTS_EXECUTOR_THREADS:4}
+    heartbeat-seconds: ${OPSCOUT_EVENTS_HEARTBEAT_SECONDS:15}
+    completed-retention-seconds: ${OPSCOUT_EVENTS_COMPLETED_RETENTION_SECONDS:300}
   trace:
     max-summary-length: ${OPSCOUT_TRACE_MAX_SUMMARY_LENGTH:800}
 

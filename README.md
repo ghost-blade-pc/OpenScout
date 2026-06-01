@@ -4,7 +4,7 @@ OpenScout Agent 是一个面向开发者的开源项目情报分析与学习路�
 
 ## 当前范围
 
-- Java 17 + Spring Boot + MyBatis-Plus：提供 `/api/agent/ask`，通过 Agent Runtime + Tool Runtime 执行 mock/real 编排、规则评分、学习计划和 Trace。
+- Java 17 + Spring Boot + MyBatis-Plus：提供 `/api/agent/ask`，通过 Agent Runtime + Tool Runtime 执行 mock/real 编排、规则评分、学习计划、Trace 和 Agent Run/SSE 事件流。
 - Go 1.22 + Gin：提供 Repo Collector 接口，支持 mock 模式和可选 GitHub API 模式。
 - MySQL + Redis：通过 Docker Compose 提供本地依赖；**持久化默认关闭**，启用方式见下方"持久化"章节。
 - Spring AI + DeepSeek V4 Pro：配置位已预留，后续阶段再接真实 Tool Calling。
@@ -185,13 +185,13 @@ export DEEPSEEK_API_KEY=<secret>
 mock 模式计划：
 
 ```text
-interpret_goal -> check_memory -> search_repos -> score_projects -> evidence_react -> generate_learning_plan -> generate_answer
+interpret_goal -> check_memory -> search_repos -> score_projects -> evidence_react -> generate_learning_plan -> generate_answer -> verify_answer
 ```
 
 真实 GitHub 模式计划：
 
 ```text
-interpret_goal -> check_memory -> search_repos -> fetch_readme -> score_projects -> evidence_react -> generate_learning_plan -> generate_answer
+interpret_goal -> check_memory -> search_repos -> fetch_readme -> score_projects -> evidence_react -> generate_learning_plan -> generate_answer -> verify_answer
 ```
 
 Trace 中会通过 `TraceToolCall.toolName` 事件记录 Runtime 过程：
@@ -221,6 +221,7 @@ Trace 中会通过 `TraceToolCall.toolName` 事件记录 Runtime 过程：
 | `evidence_react` | 基于评分后的 evidence gap 追加有限 README 补查并重评分 |
 | `generate_learning_plan` | 生成 7 天学习计划，持久化失败时返回临时计划 |
 | `generate_answer` | 基于规则评分生成最终回答，LLM 不可用时 fallback |
+| `verify_answer` | 对最终回答、证据声明和学习计划做规则自检，不阻断主流程 |
 
 Trace 继续复用 `TraceToolCall`，在阶段 8 的 plan/step/observation 事件之外追加 Tool Runtime 事件：
 
@@ -255,6 +256,60 @@ Trace 追加以下摘要事件：
 | `evidence_react_stopped` | 记录停止原因，如 disabled、mode_not_real、no_actionable_gap、rate_limited、max_rounds_reached |
 
 `evidence_react` 只增强证据，不允许 LLM 修改规则评分。GitHub 404 和普通单 repo 失败会降级为 observation；遇到限流会停止后续补查，但不破坏 `/api/agent/ask` 主流程。
+
+## Agent Events Stream（阶段 13）
+
+阶段 13 新增异步 Agent Run 与 SSE 事件流，用于本地演示和工程观测。旧的同步接口 `/api/agent/ask` 保持兼容；需要实时观察计划、工具、观察、补查和自检过程时，使用 run API。
+
+创建异步 run：
+
+```bash
+curl -X POST http://localhost:8080/api/agent/runs \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"我想一周内学习 Spring AI Agent"}'
+```
+
+响应包含 `runId`、`traceId`、当前 `status` 和 `eventsUrl`。查询 run 快照：
+
+```bash
+curl http://localhost:8080/api/agent/runs/<runId>
+```
+
+订阅 SSE 事件流：
+
+```bash
+curl -N http://localhost:8080/api/agent/runs/<runId>/events
+```
+
+事件类型包括：
+
+| event | 含义 |
+|---|---|
+| `run_started` | run 已创建并开始执行 |
+| `plan_created` | Agent Runtime 计划已生成 |
+| `step_started` / `step_finished` | 单个 step 开始或结束 |
+| `tool_started` / `tool_finished` / `tool_failed` | Tool 调用开始、成功或失败 |
+| `observation_created` | step observation 摘要已生成 |
+| `evidence_*` | Evidence ReAct gap、补查、重评分或停止摘要 |
+| `verify_completed` | Reflection Verifier 自检摘要 |
+| `run_completed` / `run_failed` | run 最终成功或失败 |
+| `heartbeat` | 长连接心跳 |
+
+默认配置：
+
+| 环境变量 | 默认值 | 说明 |
+|---|---|---|
+| `OPSCOUT_EVENTS_ENABLED` | `true` | 是否启用 run/SSE 接口 |
+| `OPSCOUT_EVENTS_SSE_TIMEOUT_SECONDS` | `300` | 单个 SSE 连接超时秒数 |
+| `OPSCOUT_EVENTS_BUFFER_SIZE` | `200` | 每个 run 保留的最近事件数 |
+| `OPSCOUT_EVENTS_MAX_ACTIVE_RUNS` | `20` | 内存中最多活跃 run 数 |
+| `OPSCOUT_EVENTS_EXECUTOR_THREADS` | `4` | 异步 run 执行线程数 |
+| `OPSCOUT_EVENTS_HEARTBEAT_SECONDS` | `15` | SSE 心跳间隔 |
+| `OPSCOUT_EVENTS_COMPLETED_RETENTION_SECONDS` | `300` | 已完成 run 和事件回放 buffer 的保留秒数 |
+
+心跳与 completed cleanup 的后台调度最小间隔为 1 秒；即使上述秒数配置为 `0`，也不会以 0ms fixed delay 空转。
+
+第一版使用进程内 run store 和 bounded event buffer，不新增 DDL、Redis/MQ、跨实例广播或事件持久化。事件 payload 只输出摘要字段，并复用 Trace 脱敏和长度截断规则；完整 README、完整 prompt、Token、Key 和异常堆栈不会进入事件流。
 
 ## 学习计划（阶段 7）
 
