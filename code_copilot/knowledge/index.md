@@ -14,6 +14,7 @@
 - `code_copilot/changes/openscout-agent-runtime/`：阶段 8 Agent Runtime 内核，`done`；包含规则模板 Planner、PlanExecutor、Runtime 模型、AgentService 委托、Trace toolName 事件和 Runtime/Trace/AgentService 回归测试。
 - `code_copilot/changes/openscout-tool-runtime/`：阶段 9 Tool Runtime，`done`；包含 Java Agent Server 内部 Tool Runtime 契约、ToolRegistry/ToolExecutor、6 个固定 Tool、Trace `agent_tool_*` 事件、PlanExecutor 委托 Tool Runtime 和回归验证。
 - `code_copilot/changes/openscout-project-memory-rag/`：阶段 10 Project Memory / RAG，`done`；包含 ProjectMemoryService（MySQL LIKE 关键词搜索 + repo_analysis 缓存查询 + freshness 判断）、CheckMemoryTool（先于 search_repos 执行）、Planner 计划变更（mock 6 step / real 7 step）、SearchReposTool memory 跳过、FetchReadmeTool README 缓存命中（含 hasExamples 正则修复和 readmeLength 推断）、ScoreProjectsTool memory_writeback、7 个新 Trace 事件和 50 测试回归。
+- `code_copilot/changes/openscout-evidence-react/`：阶段 11 Evidence ReAct，`done`；包含 EvidenceGapDetector、ReadmeEvidenceEnricher、EvidenceReActTool、RecommendationScoringService、`openscout.react.*` 配置、Planner 插入 `evidence_react`、README-only 补查、重评分、同请求 README 失败去重、空 README `empty_readme` 处理、`fetch_readme` rate limit 停止语义，以及 70 测试回归。
 
 ## 已沉淀知识
 
@@ -418,6 +419,56 @@ docker exec openscout-mysql mysql -uopenscout -popenscout openscout \
 - N+1 DB 查询：`CheckMemoryTool` 对每个缓存 repo 做单次 `getCachedAnalysis()`，最多 20 次额外查询。MVP 数据量下无实际影响，后续可增加批量 `getCachedAnalyses(List<String>)` 方法。
 - `readmeLength` 从 evidence 推断而非存储原始值：长 README (>=2000) 能正确命中阈值，短 README (<2000) 使用 500 作为保守估算值。
 
+## 阶段 11 Evidence ReAct 知识（2026-06-01 实现完成）
+
+### Evidence ReAct 架构
+
+- **文件**：`openscout-agent-server/src/main/java/com/openscout/agent/react/EvidenceGapDetector.java`、`openscout-agent-server/src/main/java/com/openscout/agent/tool/EvidenceReActTool.java`
+- `evidence_react` 是固定 Tool，不开放用户动态指定 Tool，不接 Spring AI `@Tool`、MCP 或 SSE。
+- Planner 结构：
+  - Mock：`interpret_goal → check_memory → search_repos → score_projects → evidence_react → generate_learning_plan → generate_answer`
+  - Real：`interpret_goal → check_memory → search_repos → fetch_readme → score_projects → evidence_react → generate_learning_plan → generate_answer`
+- Mock 模式中 ReAct 只记录 `mode_not_real` 停止原因，不调用 GitHub。
+
+### Gap 检测与 README 补查
+
+- **文件**：`openscout-agent-server/src/main/java/com/openscout/agent/react/EvidenceGap.java`、`EvidenceGapType.java`、`ReadmeEvidenceEnricher.java`
+- 第一版只补 README evidence，不做 release、目录结构、issues 等额外 GitHub 调用。
+- gap 类型：`MISSING_README`、`WEAK_DOC_EVIDENCE`、`CACHE_EVIDENCE_INCOMPLETE`。
+- 补查成功后更新 `AgentContext.repos` 中对应 `RepoSummary`，再通过 `RecommendationScoringService` 重新评分并排序。
+- `ReadmeEvidenceEnricher` 复用 `CollectorClient.getReadme(owner, repo, "github")`，只返回 README 长度、examples 命中、状态和错误摘要，不暴露完整 README。
+- `FetchReadmeTool` 会把同一次 ask 内 README 失败 observation 记录到 `AgentContext`；`EvidenceReActTool` 看到已失败 repo 会记录 `skipped_previous_<status>` observation，不再重复调用 Collector。
+- `FetchReadmeTool` 遇到 `rate_limited` 会停止后续 Top 5 README 调用，并把 `retryAfterSeconds` 传给 `EvidenceReActTool`；ReAct 复用该 observation 输出 `rate_limited` 和 retryAfter 后停止补查。
+- 空 README 不算补查成功；`ReadmeEvidenceEnricher` 在 `readmeLength <= 0` 时返回 `empty_readme` observation。
+
+### 配置约定
+
+| 环境变量 | YAML 键 | 默认值 | 用途 |
+|---|---|---|---|
+| `OPSCOUT_REACT_ENABLED` | `openscout.react.enabled` | `true` | Evidence ReAct 总开关 |
+| `OPSCOUT_REACT_MAX_ROUNDS` | `openscout.react.max-rounds` | `1` | 最大补查轮数 |
+| `OPSCOUT_REACT_MAX_FOLLOW_UP_REPOS` | `openscout.react.max-follow-up-repos` | `3` | 单轮最多补查 repo 数 |
+
+### Trace 事件约定
+
+| 事件名 | 含义 |
+|---|---|
+| `evidence_gap_detected` | 记录本轮 gap 数量、repo 和 gapType |
+| `evidence_follow_up_started` | 记录补查 action 和原因 |
+| `evidence_follow_up_observed` | 记录补查状态、README 长度、限流或错误摘要 |
+| `evidence_rescore_completed` | 补查成功后重新评分完成 |
+| `evidence_react_stopped` | 记录停止原因，如 disabled、mode_not_real、no_actionable_gap、rate_limited、max_rounds_reached |
+
+所有 ReAct 事件继续复用 `TraceToolCall` 和 `TraceService.sanitize()`，不新增 DDL。
+
+### 已知约束
+
+- ReAct 是增强能力，单 repo 404 或普通异常不破坏 ask 主流程；遇到限流停止后续补查并记录 `retryAfterSeconds`。
+- 默认最大一轮、最多 3 个 repo，避免 GitHub API 配额和延迟失控。
+- 阶段 11 不做 Reflection Verifier；LLM 仍不得覆盖规则评分。
+- Review fix 已关闭：`fetch_readme` 失败后同请求不再重复补查同一 repo README；空 README 返回 `empty_readme`，不计为 fetched。
+- Review 复查 fix 已关闭：`FetchReadmeTool` rate limit 停止语义已补齐，当前无阶段 11 阻塞 deferred。
+
 ## 待沉淀主题
 
 - TODO: Spring AI Tool Calling（`@Tool` 注解）、Advisor、结构化输出与 DeepSeek V4 Pro 的实际版本和项目用法（Function Calling 兼容性待验证）。
@@ -430,6 +481,7 @@ docker exec openscout-mysql mysql -uopenscout -popenscout openscout \
 - [x] 学习计划生成、learning_goal/learning_task 持久化、任务状态 API → 已沉淀到阶段 7 知识。
 - [x] Java Agent Server 内部 Tool Runtime、固定 Tool、Trace `agent_tool_*` 事件 → 已沉淀到阶段 9 知识。
 - [x] Project Memory / RAG、MySQL LIKE 关键词检索、freshness 判断、memory hit/miss/write-back Trace 事件 → 已沉淀到阶段 10 知识。
+- [x] Evidence ReAct、README-only 补查、有限轮数、gap/follow-up/observation Trace 事件 → 已沉淀到阶段 11 知识。
 
 ## 索引规则
 

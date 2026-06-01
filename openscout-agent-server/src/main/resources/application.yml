@@ -41,6 +41,10 @@ openscout:
   memory:
     enabled: ${OPSCOUT_MEMORY_ENABLED:true}
     freshness-hours: ${OPSCOUT_MEMORY_FRESHNESS_HOURS:24}
+  react:
+    enabled: ${OPSCOUT_REACT_ENABLED:true}
+    max-rounds: ${OPSCOUT_REACT_MAX_ROUNDS:1}
+    max-follow-up-repos: ${OPSCOUT_REACT_MAX_FOLLOW_UP_REPOS:3}
   trace:
     max-summary-length: ${OPSCOUT_TRACE_MAX_SUMMARY_LENGTH:800}
 

@@ -22,6 +22,8 @@ public class RuleBasedAgentPlanner {
             steps.add(new PlanStep("step-" + idx++, "fetch_readme", "为 Top 仓库补充 README 证据", "maxTargets=5", true));
         }
         steps.add(new PlanStep("step-" + idx++, "score_projects", "按规则评分并排序候选项目", "source=repos", false));
+        steps.add(new PlanStep("step-" + idx++, "evidence_react",
+                "基于评分证据缺口追加有限 README 补查", "source=recommendations", true));
         steps.add(new PlanStep("step-" + idx++, "generate_learning_plan", "基于 Top 推荐生成学习计划", "durationDays=7", true));
         steps.add(new PlanStep("step-" + idx, "generate_answer", "基于规则评分生成最终回答", "source=recommendations", false));
         return new AgentPlan("plan-" + UUID.randomUUID(), mode, steps);

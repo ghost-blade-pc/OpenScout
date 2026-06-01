@@ -2,6 +2,7 @@ package com.openscout.agent.runtime;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.openscout.agent.tool.CheckMemoryTool;
+import com.openscout.agent.tool.EvidenceReActTool;
 import com.openscout.agent.tool.FetchReadmeTool;
 import com.openscout.agent.tool.GenerateAnswerTool;
 import com.openscout.agent.tool.GenerateLearningPlanTool;
@@ -10,6 +11,9 @@ import com.openscout.agent.tool.ScoreProjectsTool;
 import com.openscout.agent.tool.SearchReposTool;
 import com.openscout.agent.tool.ToolExecutor;
 import com.openscout.agent.tool.ToolRegistry;
+import com.openscout.agent.react.EvidenceGapDetector;
+import com.openscout.agent.react.ReadmeEvidenceEnricher;
+import com.openscout.agent.recommendation.RecommendationScoringService;
 import com.openscout.client.CollectorClient;
 import com.openscout.client.CollectorUnavailableException;
 import com.openscout.client.GitHubApiException;
@@ -35,6 +39,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class PlanExecutorTest {
@@ -55,14 +61,22 @@ class PlanExecutorTest {
         ObjectMapper objectMapper = new ObjectMapper();
         ProjectMemoryService memoryService = new ProjectMemoryService(
                 null, null, properties, objectMapper);
+        ReadmeEvidenceEnricher readmeEvidenceEnricher = new ReadmeEvidenceEnricher(collectorClient);
+        RecommendationScoringService recommendationScoringService = new RecommendationScoringService(
+                new ProjectScoreService(),
+                properties,
+                mock(RepoPersistenceService.class),
+                mock(RepoAnalysisPersistenceService.class),
+                traceService
+        );
         ToolRegistry toolRegistry = new ToolRegistry(List.of(
                 new InterpretGoalTool(new com.openscout.agent.GoalInterpreter(properties, objectMapper), traceService),
                 new CheckMemoryTool(memoryService, traceService),
                 new SearchReposTool(collectorClient, traceService),
-                new FetchReadmeTool(collectorClient, traceService, memoryService),
-                new ScoreProjectsTool(new ProjectScoreService(), properties,
-                        mock(RepoPersistenceService.class), mock(RepoAnalysisPersistenceService.class),
-                        traceService),
+                new FetchReadmeTool(traceService, memoryService, readmeEvidenceEnricher),
+                new ScoreProjectsTool(recommendationScoringService),
+                new EvidenceReActTool(properties, new EvidenceGapDetector(), readmeEvidenceEnricher,
+                        recommendationScoringService, traceService),
                 new GenerateLearningPlanTool(properties,
                         new LearningPlanGenerator(properties, objectMapper),
                         mock(LearningPlanPersistenceService.class),
@@ -91,7 +105,8 @@ class PlanExecutorTest {
         assertThat(trace.getToolCalls()).extracting(TraceToolCall::toolName)
                 .contains("agent_plan_created", "agent_step_started", "agent_step_finished",
                         "agent_observation_created", "agent_tool_started", "agent_tool_finished",
-                        "repo_search_mock", "learning_plan_generate", "memory_check");
+                        "repo_search_mock", "learning_plan_generate", "memory_check",
+                        "evidence_react_stopped");
     }
 
     @Test
@@ -128,6 +143,7 @@ class PlanExecutorTest {
                     assertThat(call.toolName()).isEqualTo("readme_fetch_github");
                     assertThat(call.outputSummary()).contains("skipped=1");
                 });
+        verify(collectorClient, times(1)).getReadme("test", "repo", "github");
     }
 
     private RepoSummary repo(String owner, String repo, int readmeLength) {

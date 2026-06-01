@@ -6,7 +6,10 @@ import com.openscout.client.RepoSummary;
 import com.openscout.learning.LearningPlanResponse;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 public class AgentContext {
 
@@ -19,6 +22,7 @@ public class AgentContext {
     private String answer;
     private boolean memoryHit;
     private int memoryRepoCount;
+    private final Map<String, ReadmeFailureObservation> readmeFailureObservations = new HashMap<>();
 
     public AgentContext(String userGoal, AgentRuntimeMode mode) {
         this.userGoal = userGoal;
@@ -91,5 +95,38 @@ public class AgentContext {
 
     public void setMemoryRepoCount(int memoryRepoCount) {
         this.memoryRepoCount = memoryRepoCount;
+    }
+
+    public void recordReadmeFailure(String fullName, String status) {
+        recordReadmeFailure(fullName, status, 0);
+    }
+
+    public void recordReadmeFailure(String fullName, String status, int retryAfterSeconds) {
+        if (fullName == null || fullName.isBlank() || status == null || status.isBlank()) {
+            return;
+        }
+        readmeFailureObservations.put(fullName,
+                new ReadmeFailureObservation(status, Math.max(0, retryAfterSeconds)));
+    }
+
+    public Optional<String> readmeFailureStatus(String fullName) {
+        return readmeFailureObservation(fullName).map(ReadmeFailureObservation::status);
+    }
+
+    public Optional<ReadmeFailureObservation> readmeFailureObservation(String fullName) {
+        if (fullName == null || fullName.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(readmeFailureObservations.get(fullName));
+    }
+
+    public void clearReadmeFailure(String fullName) {
+        if (fullName == null || fullName.isBlank()) {
+            return;
+        }
+        readmeFailureObservations.remove(fullName);
+    }
+
+    public record ReadmeFailureObservation(String status, int retryAfterSeconds) {
     }
 }
