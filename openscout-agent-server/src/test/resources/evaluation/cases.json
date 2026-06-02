@@ -1,0 +1,65 @@
+{
+  "cases": [
+    {
+      "id": "mock-spring-ai-agent",
+      "question": "我想一周内学习 Spring AI Agent",
+      "mode": "MOCK",
+      "optional": false,
+      "tags": ["mock", "recommendation", "evidence", "verifier"],
+      "expectations": {
+        "expectedKeywords": ["spring", "ai"],
+        "expectedEvidence": ["updated", "README"],
+        "expectedTraceEvents": [
+          "agent_plan_created",
+          "repo_search_mock",
+          "learning_plan_generate",
+          "verify_completed"
+        ]
+      },
+      "thresholds": {
+        "minRecommendationRelevance": 0.5,
+        "minEvidenceCoverage": 0.5,
+        "maxLatencyMs": 10000
+      }
+    },
+    {
+      "id": "real-memory-hit-react",
+      "question": "我想学习 React 前端项目",
+      "mode": "REAL",
+      "optional": false,
+      "tags": ["memory", "github-savings", "real-plan", "mocked-memory"],
+      "expectations": {
+        "expectedKeywords": ["react"],
+        "expectedEvidence": ["README", "examples"],
+        "expectedTraceEvents": [
+          "memory_hit",
+          "search_repos_skipped",
+          "readme_cache_hit",
+          "verify_completed"
+        ]
+      },
+      "thresholds": {
+        "minRecommendationRelevance": 1.0,
+        "minEvidenceCoverage": 1.0,
+        "maxLatencyMs": 10000
+      }
+    },
+    {
+      "id": "optional-real-github-memory",
+      "question": "我想找适合学习 Go 微服务的开源项目",
+      "mode": "REAL",
+      "optional": true,
+      "tags": ["optional", "github", "memory"],
+      "expectations": {
+        "expectedKeywords": ["go", "microservice"],
+        "expectedEvidence": ["README"],
+        "expectedTraceEvents": ["repo_search_github", "readme_fetch_github"]
+      },
+      "thresholds": {
+        "minRecommendationRelevance": 0.3,
+        "minEvidenceCoverage": 0.3,
+        "maxLatencyMs": 30000
+      }
+    }
+  ]
+}

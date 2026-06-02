@@ -16,6 +16,7 @@
 - `code_copilot/changes/openscout-project-memory-rag/`：阶段 10 Project Memory / RAG，`done`；包含 ProjectMemoryService（MySQL LIKE 关键词搜索 + repo_analysis 缓存查询 + freshness 判断）、CheckMemoryTool（先于 search_repos 执行）、Planner 计划变更（mock 6 step / real 7 step）、SearchReposTool memory 跳过、FetchReadmeTool README 缓存命中（含 hasExamples 正则修复和 readmeLength 推断）、ScoreProjectsTool memory_writeback、7 个新 Trace 事件和 50 测试回归。
 - `code_copilot/changes/openscout-evidence-react/`：阶段 11 Evidence ReAct，`done`；包含 EvidenceGapDetector、ReadmeEvidenceEnricher、EvidenceReActTool、RecommendationScoringService、`openscout.react.*` 配置、Planner 插入 `evidence_react`、README-only 补查、重评分、同请求 README 失败去重、空 README `empty_readme` 处理、`fetch_readme` rate limit 停止语义，以及 70 测试回归。
 - `code_copilot/changes/openscout-reflection-verifier/`：阶段 12 Reflection Verifier，`done`；包含 VerifyAnswerTool、ScoreIntegrityChecker、EvidenceClaimsChecker、LearningPlanChecker、`openscout.verifier.*` 配置、Planner 插入 `verify_answer`、Trace `verify_completed` 事件，以及 28 个新增测试（总 98 tests）。
+- `code_copilot/changes/openscout-agent-evaluation/`：阶段 14 Agent Evaluation，`done`；包含 `com.openscout.evaluation` 评测模型/Runner/指标计算/报告生成、默认 fixture、默认 Maven 评测命令、JSON/Markdown 报告、seeded memory REAL plan、两轮 review fix，以及 8 个 evaluation tests / 124 个 Java tests / Go tests / Docker Compose config 验证。
 
 ## 已沉淀知识
 
@@ -511,6 +512,52 @@ docker exec openscout-mysql mysql -uopenscout -popenscout openscout \
 - 分数提取依赖正则匹配中文评分格式，可能存在漏匹配；未匹配到时产生 `SCORE_FORMAT_UNRECOGNIZED` warning。
 - 证据声明检查使用启发式关键词匹配，存在误报风险。
 
+## 阶段 14 Agent Evaluation 知识（2026-06-02 实现完成）
+
+### Evaluation 模块与固定命令
+
+- **包路径**：`openscout-agent-server/src/main/java/com/openscout/evaluation/`
+- 核心类：
+  - `EvaluationCaseLoader`：从 `src/test/resources/evaluation/cases.json` 读取固定 case，并校验 id/question/mode/expectations/thresholds。
+  - `AgentEvaluationRunner`：按 case 调用 `AgentService.ask()`，切换 `OpenScoutProperties.mockAgent`，收集 `AgentAskResponse` 和 `AgentTrace`。
+  - `EvaluationMetricCalculator`：把 response + Trace toolName 事件转成推荐相关性、evidence 覆盖、Verifier issue、Memory hit、fallback、延迟和 GitHub 调用统计。
+  - `EvaluationReportWriter`：输出 `target/openscout-evaluation/agent-evaluation-report.json` 和 `.md`。
+- 默认命令：
+
+```bash
+cd openscout-agent-server && mvn test -Dtest=AgentEvaluationCommandTest
+```
+
+### 默认 fixture 口径
+
+- 默认 fixture 是 mock-first、本地可复现，不依赖 `GITHUB_TOKEN`、`DEEPSEEK_API_KEY`、Docker 或外网。
+- 默认必跑 case：
+  - `mock-spring-ai-agent`：MOCK mode，覆盖 mock search、推荐相关性、evidence、fallback 和 verifier Trace。
+  - `real-memory-hit-react`：REAL mode，但使用测试内 seeded `ProjectMemoryService`，覆盖 `memory_hit`、`search_repos_skipped`、`readme_cache_hit` 和 GitHub 调用节省，不访问真实 GitHub。
+- `optional-real-github-memory` 是 optional REAL case，默认跳过；真实 GitHub / LLM enabled 评测后续单独执行，不作为默认必过项。
+
+### 指标口径与 review 修复
+
+- `githubReadmeFetchCalls` 不直接按 `readme_fetch_github` 事件数统计；`FetchReadmeTool` 即使 cache hit 也会记录该事件，因此评测按 output summary 的 `fetched=N` 求和，cache hit 不计入真实 README 调用。
+- `githubCallSavings` 当前按 `search_repos_skipped + readme_cache_hit` 估算，表示基于 Trace 的调用节省，不是 GitHub 配额账单。
+- JSON / Markdown sample 必须包含 `mode`，避免混合 MOCK/REAL case 时被全局 `environment.mockAgent` 误导。
+- optional skipped 样本使用 `skipped=true`、`passed=false`；summary 会排除 skipped 统计，机器消费 JSON 时不得把 skipped 当成真实通过。
+- raw `eventCounts` 是 Trace 事件计数，不等同于 API 调用次数；对外汇报调用数应使用 `EvaluationMetrics` / `EvaluationSummary`。
+
+### 报告边界
+
+- 报告只保留 answer preview、top recommendation snapshot、traceId、eventCounts、metrics 和 failureReasons，不输出完整 README、完整 prompt、完整模型响应或异常堆栈。
+- `EvaluationReportWriter` 使用 secret 正则兜底脱敏 token/key/password/secret/authorization。
+- 默认报告可写结论：本地 fixture 下可重复生成评测报告，覆盖 memory hit 和 GitHub 调用节省指标。
+- 不能夸大：默认报告不代表生产 SLA、线上准确率、大规模 benchmark，也不代表真实 GitHub / LLM enabled 评测结果。
+
+### 验证结果
+
+- `cd openscout-agent-server && mvn test -Dtest='Evaluation*Test,AgentEvaluation*Test'`：8 tests 通过。
+- `cd openscout-agent-server && mvn test`：124 tests 通过。
+- `PATH=/home/lpc/project/OpenScout/.tools/go/bin:$PATH GOCACHE=/home/lpc/project/OpenScout/.tools/go-cache GOPATH=/home/lpc/project/OpenScout/.tools/go-path go test ./...`：通过。
+- `docker compose -f deploy/docker-compose.yml config`：通过。
+
 ## 待沉淀主题
 
 - TODO: Spring AI Tool Calling（`@Tool` 注解）、Advisor、结构化输出与 DeepSeek V4 Pro 的实际版本和项目用法（Function Calling 兼容性待验证）。
@@ -525,6 +572,7 @@ docker exec openscout-mysql mysql -uopenscout -popenscout openscout \
 - [x] Project Memory / RAG、MySQL LIKE 关键词检索、freshness 判断、memory hit/miss/write-back Trace 事件 → 已沉淀到阶段 10 知识。
 - [x] Evidence ReAct、README-only 补查、有限轮数、gap/follow-up/observation Trace 事件 → 已沉淀到阶段 11 知识。
 - [x] Reflection Verifier、分数完整性/证据声明/学习计划三项规则自检、`verify_answer` Tool、`verify_completed` Trace 事件 → 已沉淀到阶段 12 知识。
+- [x] Agent Evaluation、固定评测集、JSON/Markdown 报告、指标口径、seeded memory REAL plan、默认评测边界 → 已沉淀到阶段 14 知识。
 
 ## 索引规则
 

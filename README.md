@@ -311,6 +311,42 @@ curl -N http://localhost:8080/api/agent/runs/<runId>/events
 
 第一版使用进程内 run store 和 bounded event buffer，不新增 DDL、Redis/MQ、跨实例广播或事件持久化。事件 payload 只输出摘要字段，并复用 Trace 脱敏和长度截断规则；完整 README、完整 prompt、Token、Key 和异常堆栈不会进入事件流。
 
+## Agent Evaluation（阶段 14）
+
+阶段 14 新增本地可复现的 Agent Evaluation，用固定 fixture 执行 Agent，基于 response + Trace toolName 事件计算推荐相关性、evidence 覆盖、Verifier 结果、Memory 命中、fallback、延迟和 GitHub API 调用节省，并输出 JSON/Markdown 报告。
+
+默认评测命令：
+
+```bash
+cd openscout-agent-server
+mvn test -Dtest=AgentEvaluationCommandTest
+```
+
+报告输出：
+
+```text
+openscout-agent-server/target/openscout-evaluation/agent-evaluation-report.json
+openscout-agent-server/target/openscout-evaluation/agent-evaluation-report.md
+```
+
+默认 fixture 是 mock-first，本地可重复运行，不依赖 `GITHUB_TOKEN`、`DEEPSEEK_API_KEY`、Docker 或外网。默认命令包含一个必跑的 memory-hit REAL plan 样本，但使用测试内 seeded memory，不访问真实 GitHub；真实 GitHub / LLM enabled case 只作为 optional 样本，默认命令会跳过，不作为必过项。
+
+当前报告核心字段：
+
+| 字段 | 含义 |
+|---|---|
+| `summary.allRequiredPassed` | 默认必测 case 是否全部通过 |
+| `averageRecommendationRelevance` | 推荐项目与期望关键词的匹配比例 |
+| `averageEvidenceCoverage` | 推荐 evidence 对期望证据关键词的覆盖比例 |
+| `fallbackCases` | 观察到 fallback 的样本数，例如 LLM disabled 模板回答 |
+| `verifierIssueCases` | Verifier 报告 issue 的样本数 |
+| `memoryHitCases` | Trace 中出现 memory hit / search skipped 的样本数 |
+| `githubSearchCalls` / `githubReadmeFetchCalls` | Trace 中真实 GitHub search 调用次数和 README 实际 fetched 次数；cache hit 不计入真实 README 调用 |
+| `githubCallSavings` | 基于 memory/search skip/readme cache 事件估算的调用节省 |
+| `samples[].mode` | 样本实际执行的 Agent Runtime mode，用于区分 MOCK、REAL 和 optional case |
+
+评测报告只证明本地 fixture 下的可重复行为，不代表生产 SLA、线上准确率或大规模 benchmark。报告不输出 GitHub Token、模型 Key、完整 README、完整 prompt、完整模型响应或异常堆栈。
+
 ## 学习计划（阶段 7）
 
 `/api/agent/ask` 会在推荐结果中追加 `learningPlan` 字段，基于 Top 推荐项目和规则评分证据生成 7 天学习任务。学习计划默认启用，规则模板可在无模型 Key 时稳定生成；LLM 可用时只做文案增强，不修改评分和 evidence。
