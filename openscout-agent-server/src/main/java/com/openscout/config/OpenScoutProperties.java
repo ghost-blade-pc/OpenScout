@@ -16,6 +16,8 @@ public class OpenScoutProperties {
     private React react = new React();
     private Verifier verifier = new Verifier();
     private Events events = new Events();
+    private Security security = new Security();
+    private Quota quota = new Quota();
 
     public String getCollectorBaseUrl() {
         return collectorBaseUrl;
@@ -103,6 +105,22 @@ public class OpenScoutProperties {
 
     public void setEvents(Events events) {
         this.events = events;
+    }
+
+    public Security getSecurity() {
+        return security;
+    }
+
+    public void setSecurity(Security security) {
+        this.security = security;
+    }
+
+    public Quota getQuota() {
+        return quota;
+    }
+
+    public void setQuota(Quota quota) {
+        this.quota = quota;
     }
 
     public static class Llm {
@@ -315,6 +333,72 @@ public class OpenScoutProperties {
 
         public void setCompletedRetentionSeconds(int completedRetentionSeconds) {
             this.completedRetentionSeconds = completedRetentionSeconds;
+        }
+    }
+
+    public static class Security {
+        /** API Key 保护开关，默认关闭保留本地 Demo */
+        private boolean enabled = false;
+        /** API Key 值（仅占位符，生产环境通过环境变量注入） */
+        private String apiKey = "";
+        /** 自定义 header 名称 */
+        private String headerName = "X-OpenScout-Api-Key";
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public String getApiKey() {
+            return apiKey;
+        }
+
+        public void setApiKey(String apiKey) {
+            this.apiKey = apiKey;
+        }
+
+        public String getHeaderName() {
+            return headerName;
+        }
+
+        public void setHeaderName(String headerName) {
+            this.headerName = headerName;
+        }
+    }
+
+    public static class Quota {
+        /** 入站配额开关，默认关闭保留本地 Demo */
+        private boolean enabled = false;
+        /** 每窗口最大请求数 */
+        private int maxRequestsPerWindow = 30;
+        /** 窗口时长（秒） */
+        private int windowSeconds = 60;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public int getMaxRequestsPerWindow() {
+            return maxRequestsPerWindow;
+        }
+
+        public void setMaxRequestsPerWindow(int maxRequestsPerWindow) {
+            this.maxRequestsPerWindow = maxRequestsPerWindow;
+        }
+
+        public int getWindowSeconds() {
+            return windowSeconds;
+        }
+
+        public void setWindowSeconds(int windowSeconds) {
+            this.windowSeconds = windowSeconds;
         }
     }
 }

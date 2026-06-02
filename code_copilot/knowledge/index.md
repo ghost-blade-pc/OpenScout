@@ -558,6 +558,90 @@ cd openscout-agent-server && mvn test -Dtest=AgentEvaluationCommandTest
 - `PATH=/home/lpc/project/OpenScout/.tools/go/bin:$PATH GOCACHE=/home/lpc/project/OpenScout/.tools/go-cache GOPATH=/home/lpc/project/OpenScout/.tools/go-path go test ./...`：通过。
 - `docker compose -f deploy/docker-compose.yml config`：通过。
 
+## 阶段 15 Production Hardening 知识（2026-06-02 实现完成）
+
+### 数据库迁移基线
+
+- **文件**：`openscout-agent-server/src/main/resources/db/migration/V1__init_schema.sql`、`application.yml`、`pom.xml`
+- 迁移工具：Flyway（`flyway-core` + `flyway-mysql`）。
+- V1 基线复用 `deploy/init.sql` 现有表结构（`repo_info`、`repo_analysis`、`learning_goal`、`learning_task`、`agent_trace`），不新增业务语义。
+- **配置契约**：Flyway 配置必须在 `spring.flyway.*` 命名空间（非 `openscout.flyway.*`）供 Spring Boot auto-config 读取。
+  - `spring.flyway.enabled: ${FLYWAY_ENABLED:false}` — 默认关闭，与 `OPSCOUT_PERSISTENCE_ENABLED=false` 一致。
+  - `spring.flyway.baseline-on-migrate: true` — 允许已有数据库的表继续使用 Migration。
+- `deploy/init.sql` 继续服务 Docker 首次初始化，与 V1 保持同步。
+- 后续 schema 变更约定：新建 `V2__xxx.sql` 等迁移文件，禁止直接修改 V1。
+
+### CI 基线
+
+- **文件**：`.github/workflows/ci.yml`
+- 三步 Job：
+  - `java-test`：JDK 17 + `mvn test`（全量）+ `mvn test -Dtest=AgentEvaluationCommandTest`
+  - `go-test`：Go 1.23（匹配 `go.mod` 最低版本）+ `go test ./...`
+  - `compose-config`：`docker compose -f deploy/docker-compose.yml config --quiet`
+- **关键约束**：CI 默认不依赖 `GITHUB_TOKEN`、`DEEPSEEK_API_KEY`、MySQL 长驻服务或外网业务调用。
+- Go 版本必须与 `go.mod` 的 `go` 指令匹配；版本不一致会导致 CI 永久失败。
+
+### 验证与演示脚本
+
+- **文件**：`scripts/verify-local.sh`、`scripts/demo-mock.sh`、`scripts/demo-real-optional.sh`
+- `verify-local.sh`：一键验证 Java/Go/Compose/Evaluation，优先使用项目本地 Go 工具链。
+- `demo-mock.sh`：启动 Java mock 模式 + 示例 curl 请求；需要 `spring-boot-starter-actuator` 做健康检查轮询。
+- `demo-real-optional.sh`：检查 `GITHUB_TOKEN` + `DEEPSEEK_API_KEY` 环境变量，缺失时给出明确提示并正常退出（exit 0）。
+- **敏感值约定**：所有脚本不得使用 `set -x` 打印环境变量；不得硬编码 token/key。
+
+### 最小 API Key 保护
+
+- **Java 侧**：`ApiKeyFilter`（`OncePerRequestFilter`）→ 注册于 `SecurityConfig`，`addUrlPatterns("/api/*")`，`order=1`。
+- **Go 侧**：`apiKeyMiddleware`（Gin middleware）→ 条件注册于 `NewRouter`，仅 `OPSCOUT_COLLECTOR_API_KEY != ""` 时启用。
+- **豁免路径**：`/health`、`/actuator/health`（Java）；`/health`（Go）。
+- **配置契约**：
+  | 环境变量 | YAML 键 | 默认值 |
+  |---|---|---|
+  | `OPSCOUT_SECURITY_ENABLED` | `openscout.security.enabled` | `false` |
+  | `OPSCOUT_API_KEY` | `openscout.security.api-key` | `""` |
+  | `OPSCOUT_API_KEY_HEADER` | `openscout.security.header-name` | `X-OpenScout-Api-Key` |
+  | `OPSCOUT_COLLECTOR_API_KEY` | (Go 直接读 env) | `""` |
+- **错误响应**：401 `{"error":"API key required/invalid","code":"UNAUTHORIZED"}`，不包含 key 值。
+- **NPE 防御**：使用 `Objects.equals(expectedKey, actualKey)` 而非 `expectedKey.equals()`。
+- **已知限制**：非恒定时间比较（理论上存在时序侧信道）；API Key 是最小访问门，不等价于完整生产鉴权。
+
+### Java 入站配额
+
+- **文件**：`RateLimitService.java`、`QuotaFilter.java`
+- **算法**：进程内固定窗口（`ConcurrentHashMap` + `volatile long` count）。
+- **配额键**：优先 `X-OpenScout-Api-Key` header（需 security enabled），其次 `request.getRemoteAddr()`。
+- **受保护端点**：`POST /api/agent/ask`、`POST /api/agent/runs`。
+- **超限响应**：429 `{"error":"Too many requests...","code":"QUOTA_EXCEEDED"}`。
+- **配置契约**：
+  | 环境变量 | YAML 键 | 默认值 |
+  |---|---|---|
+  | `OPSCOUT_QUOTA_ENABLED` | `openscout.quota.enabled` | `false` |
+  | `OPSCOUT_QUOTA_MAX_REQUESTS` | `openscout.quota.max-requests-per-window` | `30` |
+  | `OPSCOUT_QUOTA_WINDOW_SECONDS` | `openscout.quota.window-seconds` | `60` |
+- **内存管理**：`MAX_MAP_SIZE=10000` 阈值触发 `sweepExpired()` 清理过期条目，防止 OOM。
+- **时钟防御**：`Math.max(0, now - windowStart)` 防御 `System.currentTimeMillis()` NTP 向后跳变。
+- **已知限制**：重启清空、多实例不共享、固定窗口存在边界突增。
+
+### 配置治理与文档
+
+- **文件**：`.env.example`、`README.md` Production Hardening 章节
+- `.env.example`：所有值使用 `<your-xxx>` 占位符，无真实密钥。
+- README 配置矩阵明确 7 个维度的默认值和边界。
+- 明确声明：API Key 是最小访问门、进程内 quota 非分布式、默认 CI 不依赖外网。
+- 敏感值扫描命令确保文档/脚本/change 不泄漏 token/key。
+
+### 三层 Review 修复总结
+
+- 三轮 review（7 角度）共发现 **22 项问题**，修复 **15 项**，7 项不阻塞合并。
+- 关键修复包括：Flyway 配置命名空间、`mybatis-plus` 键丢失、ApiKeyFilter NPE、RateLimitService 内存泄漏/时钟回退、CI Go 版本不匹配、actuator 缺失、错误码语义冲突、手写 `contains` 替代标准库、Go header 名硬编码。
+
+### 验证记录
+
+- `cd openscout-agent-server && mvn test`：145 tests, 0 failures。
+- `cd openscout-repo-collector && go test ./...`：通过。
+- `docker compose -f deploy/docker-compose.yml config`：通过。
+- 敏感值扫描：README、`.env.example`、scripts、change 目录均无真实密钥。
+
 ## 待沉淀主题
 
 - TODO: Spring AI Tool Calling（`@Tool` 注解）、Advisor、结构化输出与 DeepSeek V4 Pro 的实际版本和项目用法（Function Calling 兼容性待验证）。
@@ -573,6 +657,7 @@ cd openscout-agent-server && mvn test -Dtest=AgentEvaluationCommandTest
 - [x] Evidence ReAct、README-only 补查、有限轮数、gap/follow-up/observation Trace 事件 → 已沉淀到阶段 11 知识。
 - [x] Reflection Verifier、分数完整性/证据声明/学习计划三项规则自检、`verify_answer` Tool、`verify_completed` Trace 事件 → 已沉淀到阶段 12 知识。
 - [x] Agent Evaluation、固定评测集、JSON/Markdown 报告、指标口径、seeded memory REAL plan、默认评测边界 → 已沉淀到阶段 14 知识。
+- [x] Production Hardening、数据库迁移基线、CI、验证脚本、API Key 保护、入站配额、配置治理 → 已沉淀到阶段 15 知识。
 
 ## 索引规则
 

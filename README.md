@@ -347,6 +347,101 @@ openscout-agent-server/target/openscout-evaluation/agent-evaluation-report.md
 
 评测报告只证明本地 fixture 下的可重复行为，不代表生产 SLA、线上准确率或大规模 benchmark。报告不输出 GitHub Token、模型 Key、完整 README、完整 prompt、完整模型响应或异常堆栈。
 
+## Production Hardening（阶段 15）
+
+阶段 15 补齐第一版工程化基线：数据库迁移、CI 验证、演示脚本、最小 API Key 保护、入站配额和配置治理。
+
+### 配置矩阵
+
+| 维度 | 环境变量 | 默认值 | 说明 |
+|---|---|---|---|
+| Mock/Real Agent | `OPSCOUT_MOCK_AGENT` | `true` | 默认 mock 无需外部依赖 |
+| Mock/Real Collector | `OPSCOUT_COLLECTOR_MODE` | `mock` | mock / github |
+| LLM | `OPSCOUT_LLM_ENABLED` | `true` | 无 Key 时自动 fallback |
+| 持久化 | `OPSCOUT_PERSISTENCE_ENABLED` | `false` | 需要 MySQL |
+| Flyway 迁移 | `FLYWAY_ENABLED` | `false` | 新建数据库后启用 |
+| API Key 保护 | `OPSCOUT_SECURITY_ENABLED` | `false` | 本地 Demo 不需要 |
+| 入站配额 | `OPSCOUT_QUOTA_ENABLED` | `false` | 本地 Demo 不需要 |
+
+**重要边界**：
+- API Key 是最小访问门，不解决用户身份、权限、审计或多租户。
+- 入站配额是进程内固定窗口，重启清空，多实例不共享。
+- 以上两项默认关闭以确保本地 Demo 和测试不退化。
+
+### API Key 保护
+
+为 Java Agent Server (`/api/*`) 和 Go Collector (`/api/repos/*`) 提供可选 API Key 保护。/health 始终豁免。
+
+```bash
+# 启用 API Key 保护
+export OPSCOUT_SECURITY_ENABLED=true
+export OPSCOUT_API_KEY=<your-secret-key>
+export OPSCOUT_COLLECTOR_API_KEY=<your-secret-key>
+```
+
+带 Key 调用：
+
+```bash
+curl -H 'X-OpenScout-Api-Key: <your-secret-key>' http://localhost:8080/api/agent/ask ...
+```
+
+缺失或错误 Key 返回 401，错误响应不包含 Key 值。
+
+### 入站配额
+
+对 `POST /api/agent/ask` 和 `POST /api/agent/runs` 提供进程内固定窗口限流。配额键优先 API Key，其次 client IP。
+
+```bash
+export OPSCOUT_QUOTA_ENABLED=true
+export OPSCOUT_QUOTA_MAX_REQUESTS=30    # 每窗口最大请求数
+export OPSCOUT_QUOTA_WINDOW_SECONDS=60  # 窗口秒数
+```
+
+超限返回 429 `{"error":"Too many requests...","code":"QUOTA_EXCEEDED"}`。
+
+### 数据库迁移
+
+引入 Flyway 版本化 schema 管理。V1 基线复用 `deploy/init.sql` 现有表结构，不新增业务语义。
+
+- 默认 `FLYWAY_ENABLED=false`，与 `OPSCOUT_PERSISTENCE_ENABLED` 一致的关闭策略。
+- 新环境首次启用：启动 Docker MySQL 后，`export FLYWAY_ENABLED=true` 再启动 Java。
+- 后续 schema 变更新建 `V2__xxx.sql` 等迁移文件。
+- `deploy/init.sql` 继续服务 Docker 首次初始化。
+
+### 本地验证与演示
+
+```bash
+# 一键验证（mock-first，无密钥，无外网）
+scripts/verify-local.sh
+
+# Mock 演示（启动服务 + 示例请求）
+scripts/demo-mock.sh
+
+# 可选真实验证（需要 GITHUB_TOKEN + DEEPSEEK_API_KEY + Docker）
+scripts/demo-real-optional.sh
+```
+
+`demo-real-optional.sh` 缺失环境变量时会给出明确提示并正常退出，不会误报失败。
+
+### CI
+
+仓库 CI 已覆盖：
+
+| Job | 内容 |
+|---|---|
+| `java-test` | `mvn test`（全量）+ `AgentEvaluationCommandTest` |
+| `go-test` | `go test ./...` |
+| `compose-config` | `docker compose config` 校验 |
+
+CI 默认不依赖 GitHub Token、DeepSeek Key、MySQL 长驻服务或外网业务调用。
+
+### 配置示例
+
+```bash
+cp .env.example .env
+# 编辑 .env 填入实际值；所有占位符不包含真实密钥
+```
+
 ## 学习计划（阶段 7）
 
 `/api/agent/ask` 会在推荐结果中追加 `learningPlan` 字段，基于 Top 推荐项目和规则评分证据生成 7 天学习任务。学习计划默认启用，规则模板可在无模型 Key 时稳定生成；LLM 可用时只做文案增强，不修改评分和 evidence。

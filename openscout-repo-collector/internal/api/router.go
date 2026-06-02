@@ -13,10 +13,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func NewRouter(repoService *service.RepoService, logger *slog.Logger) *gin.Engine {
+func NewRouter(repoService *service.RepoService, logger *slog.Logger, apiKey string, apiKeyHeader string) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(requestLogger(logger))
+
+	// API Key 保护：仅当配置了 key 时启用；/health 始终豁免
+	if apiKey != "" {
+		router.Use(apiKeyMiddleware(apiKey, apiKeyHeader, logger))
+	}
 
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "UP"})
@@ -94,5 +99,38 @@ func requestLogger(logger *slog.Logger) gin.HandlerFunc {
 			"status", c.Writer.Status(),
 			"latency_ms", time.Since(start).Milliseconds(),
 		)
+	}
+}
+
+// apiKeyMiddleware 最小 API Key 保护。
+// 当 apiKey 非空时启用，/health 路径豁免。
+func apiKeyMiddleware(apiKey string, headerName string, logger *slog.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// 豁免健康检查
+		if c.Request.URL.Path == "/health" {
+			c.Next()
+			return
+		}
+
+		actualKey := c.GetHeader(headerName)
+		if actualKey == "" {
+			logger.Warn("API Key missing", "path", c.Request.URL.Path)
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "API key required",
+				"code":  "UNAUTHORIZED",
+			})
+			return
+		}
+
+		if actualKey != apiKey {
+			logger.Warn("API Key invalid", "path", c.Request.URL.Path)
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "API key invalid",
+				"code":  "UNAUTHORIZED",
+			})
+			return
+		}
+
+		c.Next()
 	}
 }

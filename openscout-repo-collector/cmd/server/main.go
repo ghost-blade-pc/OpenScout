@@ -20,6 +20,8 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	port := env("PORT", "8081")
 	mode := env("OPSCOUT_COLLECTOR_MODE", "mock")
+	apiKey := env("OPSCOUT_COLLECTOR_API_KEY", "")
+	apiKeyHeader := env("OPSCOUT_API_KEY_HEADER", "X-OpenScout-Api-Key")
 
 	rateLimitRPS := envFloat("OPSCOUT_RATE_LIMIT_RPS", 2, logger)
 	rateLimitBurst := envInt("OPSCOUT_RATE_LIMIT_BURST", 4, logger)
@@ -33,7 +35,7 @@ func main() {
 	githubClient := github.NewClient(httpClient, env("GITHUB_TOKEN", ""), rateLimiter, logger)
 	repoService := service.NewRepoService(mode, githubClient, memCache, logger, workerConcurrency)
 
-	router := api.NewRouter(repoService, logger)
+	router := api.NewRouter(repoService, logger, apiKey, apiKeyHeader)
 	logger.Info("starting openscout repo collector", "port", port, "mode", mode)
 	if err := router.Run(":" + port); err != nil {
 		logger.Error("collector server stopped", "error", err)
