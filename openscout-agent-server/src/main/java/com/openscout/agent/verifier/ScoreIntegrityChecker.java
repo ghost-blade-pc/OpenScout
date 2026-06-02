@@ -45,6 +45,10 @@ public class ScoreIntegrityChecker {
             Integer extractedScore = extractScoreNearRepo(answer, repoName);
 
             if (extractedScore == null) {
+                // 项目名未出现在回答中 → 跳过（LLM 可能仅覆盖 Top N 项目）
+                if (!repoMentionedInAnswer(answer, repoName)) {
+                    continue;
+                }
                 result.setScoreIntegrityOk(false);
                 result.addIssue(VerificationIssue.warning(
                         "SCORE_FORMAT_UNRECOGNIZED",
@@ -65,6 +69,17 @@ public class ScoreIntegrityChecker {
         }
 
         return result;
+    }
+
+    /**
+     * 检查项目名是否在回答文本中出现（全名或短名）。
+     */
+    private boolean repoMentionedInAnswer(String answer, String fullName) {
+        if (answer.contains(fullName)) {
+            return true;
+        }
+        String shortName = VerifierUtils.extractShortName(fullName);
+        return !shortName.isEmpty() && answer.contains(shortName);
     }
 
     Integer extractScoreNearRepo(String answer, String fullName) {

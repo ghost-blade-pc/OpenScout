@@ -15,6 +15,11 @@ bold()  { echo -e "\033[1m$*\033[0m"; }
 bold "=== OpenScout Real Demo (optional) ==="
 echo ""
 
+# 从项目根目录 .env 文件加载环境变量并导出到子进程
+if [ -f "$ROOT_DIR/.env" ]; then
+  set -a && source "$ROOT_DIR/.env" && set +a
+fi
+
 MISSING=""
 
 check_env() {

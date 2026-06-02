@@ -440,6 +440,8 @@ CI 默认不依赖 GitHub Token、DeepSeek Key、MySQL 长驻服务或外网业�
 ```bash
 cp .env.example .env
 # 编辑 .env 填入实际值；所有占位符不包含真实密钥
+# 启动服务前加载环境变量（需 export 到子进程）：
+set -a && source .env && set +a
 ```
 
 ## 学习计划（阶段 7）

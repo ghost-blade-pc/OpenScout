@@ -87,6 +87,19 @@ class ScoreIntegrityCheckerTest {
     }
 
     @Test
+    void shouldSkipRepoNotMentionedInAnswer() {
+        // LLM 回答仅覆盖 Top 5 项目，其余 5 个不在回答中 → 应跳过而不是报 issue
+        var mentioned = recommendation("owner/repo1", 80);
+        var notMentioned = recommendation("other/repo2", 60);
+        String answer = "推荐 **repo1** 评分 80 分，非常优秀。";
+
+        VerificationResult result = checker.check(answer, List.of(mentioned, notMentioned));
+
+        assertThat(result.isScoreIntegrityOk()).isTrue();
+        assertThat(result.getIssues()).isEmpty();
+    }
+
+    @Test
     void shouldExtractScoreWithPrefixWords() {
         var rec = recommendation("owner/spring-ai", 82);
         String answer = "推荐 owner/spring-ai：综合评分：82 分（满分 100）";
