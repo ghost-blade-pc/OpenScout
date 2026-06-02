@@ -9,6 +9,7 @@ import (
 
 func TestMemoryCacheExpires(t *testing.T) {
 	cache := NewMemoryCache(10 * time.Millisecond)
+	defer cache.Stop()
 	cache.SetRepo("repo", model.RepoSummary{FullName: "owner/repo"})
 
 	if _, ok := cache.GetRepo("repo"); !ok {

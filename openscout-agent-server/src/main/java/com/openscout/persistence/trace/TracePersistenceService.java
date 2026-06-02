@@ -55,6 +55,7 @@ public class TracePersistenceService {
 
     private AgentTraceEntity toEntity(AgentTrace trace) {
         AgentTraceEntity entity = new AgentTraceEntity();
+        entity.setUserId(trace.getUserId());
         entity.setTraceId(trace.getTraceId());
         entity.setUserQuestion(trace.getUserQuestion());
         entity.setToolCallsJson(serializeToolCalls(trace.getToolCalls()));

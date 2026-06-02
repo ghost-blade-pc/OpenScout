@@ -7,7 +7,9 @@ import com.openscout.agent.run.AgentRunResponse;
 import com.openscout.agent.run.AgentRunService;
 import com.openscout.agent.run.AgentRunStatus;
 import com.openscout.trace.TraceService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.Test;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.time.Instant;
@@ -15,6 +17,8 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -28,11 +32,12 @@ class AgentControllerTest {
     @Test
     void shouldCreateRun() {
         AgentAskRequest request = new AgentAskRequest("learn Java", null, null);
+        MockHttpServletRequest httpRequest = new MockHttpServletRequest();
         AgentRunCreateResponse created = new AgentRunCreateResponse(
                 "run-1", "trace-1", AgentRunStatus.RUNNING, "/api/agent/runs/run-1/events");
-        when(agentRunService.createRun(request)).thenReturn(created);
+        when(agentRunService.createRun(any(AgentAskRequest.class), any())).thenReturn(created);
 
-        AgentRunCreateResponse response = controller.createRun(request);
+        AgentRunCreateResponse response = controller.createRun(request, httpRequest);
 
         assertThat(response).isEqualTo(created);
     }

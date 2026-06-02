@@ -9,8 +9,10 @@ import com.openscout.agent.run.AgentRunCreateResponse;
 import com.openscout.agent.run.AgentRunResponse;
 import com.openscout.agent.run.AgentRunService;
 import com.openscout.client.RateLimitException;
+import com.openscout.config.ApiKeyFilter;
 import com.openscout.trace.AgentTrace;
 import com.openscout.trace.TraceService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.MediaType;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -38,8 +40,10 @@ public class AgentController {
     }
 
     @PostMapping("/ask")
-    public AgentAskResponse ask(@RequestBody AgentAskRequest request) {
-        return agentService.ask(request);
+    public AgentAskResponse ask(@RequestBody AgentAskRequest request,
+                                 HttpServletRequest httpRequest) {
+        Long userId = extractUserId(httpRequest);
+        return agentService.ask(request, userId);
     }
 
     @GetMapping("/traces/{traceId}")
@@ -50,8 +54,15 @@ public class AgentController {
     }
 
     @PostMapping("/runs")
-    public AgentRunCreateResponse createRun(@RequestBody AgentAskRequest request) {
-        return agentRunService.createRun(request);
+    public AgentRunCreateResponse createRun(@RequestBody AgentAskRequest request,
+                                             HttpServletRequest httpRequest) {
+        Long userId = extractUserId(httpRequest);
+        return agentRunService.createRun(request, userId);
+    }
+
+    private Long extractUserId(HttpServletRequest request) {
+        Object attr = request.getAttribute(ApiKeyFilter.USER_ID_ATTR);
+        return attr instanceof Long id ? id : null;
     }
 
     @GetMapping("/runs/{runId}")

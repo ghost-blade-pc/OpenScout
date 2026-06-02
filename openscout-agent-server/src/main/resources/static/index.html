@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenScout Agent</title>
+<style>
+:root {
+  --bg: #f8f9fa; --card: #fff; --text: #212529; --muted: #6c757d;
+  --border: #dee2e6; --primary: #2563eb; --primary-dark: #1d4ed8;
+  --success: #16a34a; --warn: #ca8a04; --danger: #dc2626;
+  --radius: 8px; --shadow: 0 1px 3px rgba(0,0,0,.1);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; min-height: 100vh; }
+.container { max-width: 900px; margin: 0 auto; padding: 24px 16px; }
+
+/* Header */
+.header { text-align: center; padding: 32px 0 24px; }
+.header h1 { font-size: 1.8rem; font-weight: 700; color: var(--primary); }
+.header p { color: var(--muted); font-size: .95rem; margin-top: 4px; }
+
+/* Cards */
+.card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; margin-bottom: 16px; box-shadow: var(--shadow); }
+.card h2 { font-size: 1.1rem; margin-bottom: 12px; }
+
+/* Input */
+textarea { width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); font-size: 1rem; resize: vertical; min-height: 80px; }
+textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,.15); }
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 10px 24px; border: none; border-radius: var(--radius); font-size: 1rem; font-weight: 600; cursor: pointer; transition: background .2s; }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover { background: var(--primary-dark); }
+.btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+.btn-sm { padding: 4px 12px; font-size: .8rem; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; background: var(--card); }
+.btn-sm:hover { background: var(--bg); }
+
+/* Progress */
+.progress-bar { width: 100%; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; margin: 16px 0; }
+.progress-fill { height: 100%; background: var(--primary); transition: width .3s ease; border-radius: 4px; }
+.step-log { max-height: 300px; overflow-y: auto; font-size: .85rem; }
+.step-log .entry { padding: 6px 0; border-bottom: 1px solid var(--border); display: flex; gap: 8px; align-items: baseline; }
+.step-log .time { color: var(--muted); font-size: .75rem; min-width: 70px; }
+.step-log .msg { flex: 1; }
+.step-log .ok { color: var(--success); }
+.step-log .err { color: var(--danger); }
+.step-log .wrn { color: var(--warn); }
+
+/* Results */
+.answer-box { background: #f0f7ff; border: 1px solid #bdd7f5; border-radius: var(--radius); padding: 16px; margin-bottom: 20px; white-space: pre-wrap; font-size: .95rem; line-height: 1.7; }
+.rec-list { list-style: none; }
+.rec-item { border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 12px; }
+.rec-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.rec-name { font-weight: 700; font-size: 1.05rem; }
+.rec-score { font-weight: 700; font-size: 1.1rem; padding: 2px 10px; border-radius: 4px; }
+.score-high { background: #dcfce7; color: #166534; }
+.score-mid { background: #fef9c3; color: #854d0e; }
+.score-low { background: #fee2e2; color: #991b1b; }
+.rec-meta { color: var(--muted); font-size: .85rem; margin-bottom: 4px; }
+.rec-evidence { margin-top: 8px; }
+.ev-tag { display: inline-block; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 2px 8px; margin: 2px 4px 2px 0; font-size: .78rem; }
+
+/* Learning Plan */
+.day-card { border-left: 3px solid var(--primary); padding: 12px 16px; margin-bottom: 12px; background: var(--bg); border-radius: 0 var(--radius) var(--radius) 0; }
+.day-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.day-title { font-weight: 600; }
+.task-status { display: flex; gap: 4px; }
+.status-btn { padding: 3px 10px; font-size: .75rem; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; background: var(--card); }
+.status-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+.task-detail { color: var(--muted); font-size: .85rem; }
+.task-output { font-size: .82rem; margin-top: 4px; color: var(--muted); }
+
+/* Spinner */
+.spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin .6s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <h1>OpenScout Agent</h1>
+    <p>输入学习目标，AI 为你检索开源项目、评分并生成学习计划</p>
+  </div>
+
+  <!-- Input -->
+  <div class="card" id="input-card">
+    <h2>你想学习什么？</h2>
+    <textarea id="question" placeholder="例如：我想学习 Go 微服务，推荐几个适合进阶的开源项目"></textarea>
+    <div style="margin-top:12px;display:flex;gap:8px">
+      <button class="btn btn-primary" id="submit-btn" onclick="submit()">
+        开始探索
+      </button>
+      <button class="btn btn-sm" onclick="fillExample()">填入示例</button>
+    </div>
+  </div>
+
+  <!-- Progress -->
+  <div class="card hidden" id="progress-card">
+    <h2 id="progress-title">正在分析...</h2>
+    <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+    <div class="step-log" id="step-log"></div>
+    <p style="text-align:center;margin-top:12px;color:var(--muted)" id="elapsed"></p>
+  </div>
+
+  <!-- Results -->
+  <div class="card hidden" id="results-card">
+    <h2>分析结果</h2>
+    <div class="answer-box" id="answer-box"></div>
+    <ul class="rec-list" id="rec-list"></ul>
+  </div>
+
+  <!-- Learning Plan -->
+  <div class="card hidden" id="plan-card">
+    <h2>学习计划</h2>
+    <div id="plan-container"></div>
+  </div>
+
+  <!-- Error -->
+  <div class="card hidden" id="error-card" style="border-color:var(--danger)">
+    <h2 style="color:var(--danger)">出错了</h2>
+    <p id="error-msg"></p>
+    <button class="btn btn-sm" onclick="reset()" style="margin-top:12px">重试</button>
+  </div>
+
+</div>
+
+<script>
+const API = '';
+let es = null, runId = null, goalId = null, startTime = 0;
+
+function fillExample() {
+  document.getElementById('question').value = '我想学习 Go 微服务，推荐几个适合进阶的开源项目';
+}
+
+function show(id) { document.getElementById(id).classList.remove('hidden'); }
+function hide(id) { document.getElementById(id).classList.add('hidden'); }
+
+function reset() {
+  if (es) { es.close(); es = null; }
+  hide('progress-card'); hide('results-card'); hide('plan-card'); hide('error-card');
+  show('input-card');
+  document.getElementById('step-log').innerHTML = '';
+  document.getElementById('progress-fill').style.width = '0%';
+  document.getElementById('submit-btn').disabled = false;
+  runId = null; goalId = null;
+}
+
+async function submit() {
+  const q = document.getElementById('question').value.trim();
+  if (!q) return;
+
+  hide('error-card');
+  document.getElementById('submit-btn').disabled = true;
+  show('progress-card');
+  document.getElementById('progress-title').textContent = '正在初始化...';
+  document.getElementById('elapsed').textContent = '';
+  startTime = Date.now();
+
+  try {
+    const res = await fetch(API + '/api/agent/runs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: q })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || err.error || '请求失败');
+    }
+    const data = await res.json();
+    runId = data.runId;
+    document.getElementById('progress-title').textContent = '正在执行 Agent 流程...';
+    subscribeSSE(data.eventsUrl);
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+function subscribeSSE(url) {
+  es = new EventSource(API + url);
+  let totalSteps = 9, doneSteps = 0;
+
+  es.addEventListener('plan_created', e => {
+    const d = JSON.parse(e.data);
+    const m = d.outputSummary.match(/steps=(\d+)/);
+    if (m) totalSteps = parseInt(m[1]);
+  });
+
+  es.addEventListener('step_started', e => {
+    const d = JSON.parse(e.data);
+    addLog('⏳', d.outputSummary || '开始步骤...', '');
+  });
+
+  es.addEventListener('tool_finished', e => {
+    const d = JSON.parse(e.data);
+    const cls = d.status === 'SUCCESS' ? 'ok' : 'err';
+    addLog('✓', (d.outputSummary || '').substring(0, 100), cls);
+  });
+
+  es.addEventListener('tool_failed', e => {
+    const d = JSON.parse(e.data);
+    addLog('✗', d.errorSummary || '工具执行失败', 'err');
+  });
+
+  es.addEventListener('step_finished', e => {
+    doneSteps++;
+    updateProgress(doneSteps, totalSteps);
+    updateElapsed();
+  });
+
+  es.addEventListener('llm_goal_interpret', e => {
+    const d = JSON.parse(e.data);
+    const resp = d.outputSummary || '';
+    const kw = resp.match(/keyword[=:]\s*"?([^"]+)"?/);
+    if (kw) addLog('🔍', '搜索关键词: ' + kw[1], '');
+  });
+
+  es.addEventListener('memory_hit', e => {
+    const d = JSON.parse(e.data);
+    addLog('💾', '缓存命中: ' + (d.outputSummary || '').substring(0,80), 'ok');
+  });
+
+  es.addEventListener('run_completed', e => {
+    es.close(); es = null;
+    updateProgress(totalSteps, totalSteps);
+    updateElapsed();
+    document.getElementById('progress-title').textContent = '分析完成!';
+    loadResults();
+  });
+
+  es.addEventListener('run_failed', e => {
+    es.close(); es = null;
+    const d = JSON.parse(e.data);
+    showError(d.errorSummary || 'Agent 执行失败');
+  });
+
+  es.onerror = () => {
+    if (es && es.readyState === EventSource.CLOSED && runId) {
+      // 正常关闭 (run_completed 后)
+    } else if (es) {
+      addLog('⚠', 'SSE 连接中断，尝试重连...', 'wrn');
+    }
+  };
+}
+
+function addLog(icon, msg, cls) {
+  const el = document.getElementById('step-log');
+  const time = new Date().toLocaleTimeString();
+  el.innerHTML += `<div class="entry"><span class="time">${time}</span><span>${icon}</span><span class="msg ${cls}">${msg}</span></div>`;
+  el.scrollTop = el.scrollHeight;
+}
+
+function updateProgress(done, total) {
+  const pct = total > 0 ? Math.round(done / total * 100) : 0;
+  document.getElementById('progress-fill').style.width = pct + '%';
+}
+
+function updateElapsed() {
+  const s = Math.round((Date.now() - startTime) / 1000);
+  document.getElementById('elapsed').textContent = '已用 ' + s + ' 秒';
+}
+
+async function loadResults() {
+  try {
+    const res = await fetch(API + '/api/agent/runs/' + runId);
+    if (!res.ok) throw new Error('获取结果失败');
+    const data = await res.json();
+    renderResults(data);
+    if (data.learningPlan && data.learningPlan.tasks && data.learningPlan.tasks.length > 0) {
+      goalId = data.learningPlan.goalId;
+      renderPlan(data.learningPlan);
+    }
+    hide('input-card');
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+function renderResults(data) {
+  const ans = document.getElementById('answer-box');
+  ans.textContent = data.answer || '无回答内容';
+
+  const list = document.getElementById('rec-list');
+  list.innerHTML = '';
+  if (!data.recommendations || data.recommendations.length === 0) {
+    list.innerHTML = '<li style="color:var(--muted)">暂无推荐项目</li>';
+  } else {
+    data.recommendations.forEach(r => {
+      const s = r.score.totalScore;
+      const cls = s >= 70 ? 'score-high' : s >= 40 ? 'score-mid' : 'score-low';
+      const evidence = (r.score.evidence || []).map(e =>
+        `<span class="ev-tag">${e}</span>`).join('');
+      list.innerHTML += `
+        <li class="rec-item">
+          <div class="rec-header">
+            <span class="rec-name">${esc(r.fullName)}</span>
+            <span class="rec-score ${cls}">${s} 分</span>
+          </div>
+          <div class="rec-meta">⭐ ${r.stars.toLocaleString()} · ${esc(r.language || 'N/A')} · ${esc(r.description || '').substring(0,120)}</div>
+          <div class="rec-meta">理由: ${esc(r.reason || '').substring(0,200)}</div>
+          <div class="rec-evidence">${evidence}</div>
+        </li>`;
+    });
+  }
+  show('results-card');
+}
+
+function renderPlan(plan) {
+  const container = document.getElementById('plan-container');
+  container.innerHTML = `<p style="margin-bottom:12px;color:var(--muted)">目标: ${esc(plan.goal)} · ${plan.durationDays} 天 · 技术栈: ${esc(plan.targetStack || '通用')}</p>`;
+  plan.tasks.forEach(t => {
+    const status = t.status || 'TODO';
+    container.innerHTML += `
+      <div class="day-card">
+        <div class="day-header">
+          <span class="day-title">第 ${t.dayNo} 天: ${esc(t.title)}</span>
+          <div class="task-status" data-task="${t.id}">
+            <button class="status-btn ${status==='TODO'?'active':''}" onclick="updateTask(${t.id},'TODO')">待开始</button>
+            <button class="status-btn ${status==='DOING'?'active':''}" onclick="updateTask(${t.id},'DOING')">进行中</button>
+            <button class="status-btn ${status==='DONE'?'active':''}" onclick="updateTask(${t.id},'DONE')">已完成</button>
+          </div>
+        </div>
+        <div class="task-detail">${esc(t.detail || '')}</div>
+        <div class="task-output">期望产出: ${esc(t.expectedOutput || '')}</div>
+      </div>`;
+  });
+  show('plan-card');
+}
+
+async function updateTask(taskId, status) {
+  try {
+    const res = await fetch(API + '/api/learning/tasks/' + taskId + '/status', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: status })
+    });
+    if (!res.ok) throw new Error('更新失败');
+    // 刷新 UI
+    const btns = document.querySelectorAll('[data-task="' + taskId + '"] .status-btn');
+    btns.forEach(b => b.classList.remove('active'));
+    btns.forEach(b => { if (b.textContent.trim().startsWith(status === 'TODO' ? '待' : status === 'DOING' ? '进' : '已')) b.classList.add('active'); });
+  } catch (e) {
+    alert('任务状态更新失败: ' + e.message);
+  }
+}
+
+function showError(msg) {
+  document.getElementById('error-msg').textContent = msg;
+  hide('progress-card'); hide('input-card');
+  show('error-card');
+  document.getElementById('submit-btn').disabled = false;
+}
+
+function esc(s) {
+  if (!s) return '';
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+</script>
+</body>
+</html>

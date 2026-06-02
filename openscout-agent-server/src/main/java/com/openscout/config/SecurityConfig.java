@@ -1,5 +1,7 @@
 package com.openscout.config;
 
+import com.openscout.persistence.user.UserMapper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -14,6 +16,9 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class SecurityConfig {
 
+    @Autowired(required = false)
+    private UserMapper userMapper;
+
     @Bean
     RateLimitService rateLimitService(OpenScoutProperties properties) {
         OpenScoutProperties.Quota quota = properties.getQuota();
@@ -22,7 +27,7 @@ public class SecurityConfig {
 
     @Bean
     FilterRegistrationBean<ApiKeyFilter> apiKeyFilterRegistration(OpenScoutProperties properties) {
-        ApiKeyFilter filter = new ApiKeyFilter(properties.getSecurity());
+        ApiKeyFilter filter = new ApiKeyFilter(properties.getSecurity(), userMapper);
         FilterRegistrationBean<ApiKeyFilter> registration = new FilterRegistrationBean<>();
         registration.setFilter(filter);
         registration.addUrlPatterns("/api/*");

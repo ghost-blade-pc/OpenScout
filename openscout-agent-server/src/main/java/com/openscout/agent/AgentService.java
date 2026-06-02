@@ -25,11 +25,15 @@ public class AgentService {
     }
 
     public AgentAskResponse ask(AgentAskRequest request) {
+        return ask(request, null);
+    }
+
+    public AgentAskResponse ask(AgentAskRequest request, Long userId) {
         String question = request.effectiveQuestion();
         if (question.isBlank()) {
             throw new IllegalArgumentException("question or goal must not be blank");
         }
-        AgentTrace trace = traceService.start(question);
+        AgentTrace trace = traceService.start(question, userId);
         try {
             AgentRuntimeResult result = planExecutor.execute(question, trace);
             traceService.complete(trace, result.scoreSummary(), result.answer());

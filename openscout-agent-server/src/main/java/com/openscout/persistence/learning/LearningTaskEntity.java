@@ -11,6 +11,7 @@ public class LearningTaskEntity {
 
     @TableId(type = IdType.AUTO)
     private Long id;
+    private Long userId;
     private Long goalId;
     private Integer dayNo;
     private String taskTitle;
@@ -27,6 +28,9 @@ public class LearningTaskEntity {
     public void setId(Long id) {
         this.id = id;
     }
+
+    public Long getUserId() { return userId; }
+    public void setUserId(Long userId) { this.userId = userId; }
 
     public Long getGoalId() {
         return goalId;

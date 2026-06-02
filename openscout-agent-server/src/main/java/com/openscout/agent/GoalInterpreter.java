@@ -71,7 +71,7 @@ public class GoalInterpreter {
         }
         Instant start = Instant.now();
         try {
-            String response = callLlm(safeGoal);
+            String response = callLlmWithRetry(safeGoal);
             long latencyMs = Duration.between(start, Instant.now()).toMillis();
             if (traceService != null && trace != null) {
                 traceService.recordToolCall(trace, "llm_goal_interpret",
@@ -91,6 +91,15 @@ public class GoalInterpreter {
             log.warn("GoalInterpreter LLM call failed, using fallback: {}", e.getMessage());
             return fallback(safeGoal);
         }
+    }
+
+    private String callLlmWithRetry(String safeGoal) {
+        String response = callLlm(safeGoal);
+        if (response == null || response.isBlank()) {
+            log.warn("GoalInterpreter got empty response, retrying once");
+            response = callLlm(safeGoal);
+        }
+        return response;
     }
 
     private String callLlm(String safeGoal) {

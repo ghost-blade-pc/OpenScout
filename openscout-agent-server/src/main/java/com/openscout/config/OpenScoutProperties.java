@@ -401,4 +401,25 @@ public class OpenScoutProperties {
             this.windowSeconds = windowSeconds;
         }
     }
+
+    // ---- CORS ----
+
+    private final Cors cors = new Cors();
+
+    public Cors getCors() {
+        return cors;
+    }
+
+    public static class Cors {
+
+        private String allowedOrigins = "*";
+
+        public String getAllowedOrigins() {
+            return allowedOrigins;
+        }
+
+        public void setAllowedOrigins(String allowedOrigins) {
+            this.allowedOrigins = allowedOrigins;
+        }
+    }
 }

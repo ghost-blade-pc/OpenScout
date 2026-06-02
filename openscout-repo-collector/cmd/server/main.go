@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/LiPeicheng/openscout-repo-collector/internal/api"
@@ -31,16 +34,40 @@ func main() {
 
 	httpClient := &http.Client{Timeout: time.Duration(httpTimeoutSeconds) * time.Second}
 	memCache := cache.NewMemoryCache(time.Duration(cacheTTLMinutes) * time.Minute)
+	defer memCache.Stop()
 	rateLimiter := limiter.New(rate.Limit(rateLimitRPS), rateLimitBurst)
 	githubClient := github.NewClient(httpClient, env("GITHUB_TOKEN", ""), rateLimiter, logger)
 	repoService := service.NewRepoService(mode, githubClient, memCache, logger, workerConcurrency)
 
 	router := api.NewRouter(repoService, logger, apiKey, apiKeyHeader)
-	logger.Info("starting openscout repo collector", "port", port, "mode", mode)
-	if err := router.Run(":" + port); err != nil {
-		logger.Error("collector server stopped", "error", err)
+
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: router,
+	}
+
+	// 在后台 goroutine 启动服务
+	go func() {
+		logger.Info("starting openscout repo collector", "port", port, "mode", mode)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("collector server stopped unexpectedly", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	// 等待中断信号以优雅关闭
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	logger.Info("shutting down collector server...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		logger.Error("collector forced shutdown", "error", err)
 		os.Exit(1)
 	}
+	logger.Info("collector server stopped gracefully")
 }
 
 func env(key, fallback string) string {

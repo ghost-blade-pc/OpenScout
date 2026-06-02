@@ -28,7 +28,7 @@ class ApiKeyFilterTest {
     @Test
     void shouldPassThroughWhenDisabled() throws Exception {
         OpenScoutProperties.Security security = security(false, VALID_KEY, HEADER);
-        ApiKeyFilter filter = new ApiKeyFilter(security);
+        ApiKeyFilter filter = new ApiKeyFilter(security, null);
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/agent/ask");
         MockHttpServletResponse response = new MockHttpServletResponse();
 
@@ -43,7 +43,7 @@ class ApiKeyFilterTest {
     @Test
     void shouldReturn401WhenKeyMissing() throws Exception {
         OpenScoutProperties.Security security = security(true, VALID_KEY, HEADER);
-        ApiKeyFilter filter = new ApiKeyFilter(security);
+        ApiKeyFilter filter = new ApiKeyFilter(security, null);
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/agent/ask");
         MockHttpServletResponse response = new MockHttpServletResponse();
 
@@ -59,7 +59,7 @@ class ApiKeyFilterTest {
     @Test
     void shouldReturn401WhenKeyInvalid() throws Exception {
         OpenScoutProperties.Security security = security(true, VALID_KEY, HEADER);
-        ApiKeyFilter filter = new ApiKeyFilter(security);
+        ApiKeyFilter filter = new ApiKeyFilter(security, null);
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/agent/ask");
         request.addHeader(HEADER, "wrong-key");
         MockHttpServletResponse response = new MockHttpServletResponse();
@@ -76,7 +76,7 @@ class ApiKeyFilterTest {
     @Test
     void shouldPassThroughWhenKeyValid() throws Exception {
         OpenScoutProperties.Security security = security(true, VALID_KEY, HEADER);
-        ApiKeyFilter filter = new ApiKeyFilter(security);
+        ApiKeyFilter filter = new ApiKeyFilter(security, null);
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/agent/ask");
         request.addHeader(HEADER, VALID_KEY);
         MockHttpServletResponse response = new MockHttpServletResponse();
@@ -92,7 +92,7 @@ class ApiKeyFilterTest {
     @Test
     void shouldExemptHealthWhenEnabled() throws Exception {
         OpenScoutProperties.Security security = security(true, VALID_KEY, HEADER);
-        ApiKeyFilter filter = new ApiKeyFilter(security);
+        ApiKeyFilter filter = new ApiKeyFilter(security, null);
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/health");
         MockHttpServletResponse response = new MockHttpServletResponse();
 
@@ -107,7 +107,7 @@ class ApiKeyFilterTest {
     @Test
     void shouldNotLeakKeyInErrorResponse() throws Exception {
         OpenScoutProperties.Security security = security(true, VALID_KEY, HEADER);
-        ApiKeyFilter filter = new ApiKeyFilter(security);
+        ApiKeyFilter filter = new ApiKeyFilter(security, null);
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/agent/ask");
         MockHttpServletResponse response = new MockHttpServletResponse();
 
@@ -122,7 +122,7 @@ class ApiKeyFilterTest {
     @Test
     void shouldUseCustomHeaderName() throws Exception {
         OpenScoutProperties.Security security = security(true, VALID_KEY, "X-Custom-Key");
-        ApiKeyFilter filter = new ApiKeyFilter(security);
+        ApiKeyFilter filter = new ApiKeyFilter(security, null);
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/agent/ask");
         request.addHeader("X-Custom-Key", VALID_KEY);
         MockHttpServletResponse response = new MockHttpServletResponse();
@@ -136,7 +136,7 @@ class ApiKeyFilterTest {
     @Test
     void shouldRejectWhenCustomHeaderMissing() throws Exception {
         OpenScoutProperties.Security security = security(true, VALID_KEY, "X-Custom-Key");
-        ApiKeyFilter filter = new ApiKeyFilter(security);
+        ApiKeyFilter filter = new ApiKeyFilter(security, null);
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/agent/ask");
         request.addHeader(HEADER, VALID_KEY); // wrong header name
         MockHttpServletResponse response = new MockHttpServletResponse();
@@ -152,7 +152,7 @@ class ApiKeyFilterTest {
     @Test
     void shouldReturn401WhenApiKeyIsNull() throws Exception {
         OpenScoutProperties.Security security = security(true, null, HEADER);
-        ApiKeyFilter filter = new ApiKeyFilter(security);
+        ApiKeyFilter filter = new ApiKeyFilter(security, null);
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/agent/ask");
         request.addHeader(HEADER, "some-key"); // any key should fail against null expected
         MockHttpServletResponse response = new MockHttpServletResponse();

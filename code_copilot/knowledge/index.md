@@ -642,6 +642,91 @@ cd openscout-agent-server && mvn test -Dtest=AgentEvaluationCommandTest
 - `docker compose -f deploy/docker-compose.yml config`：通过。
 - 敏感值扫描：README、`.env.example`、scripts、change 目录均无真实密钥。
 
+## 阶段 16 Phase 0 "Real User Ready" 知识（2026-06-02 实现完成）
+
+### Docker 多阶段构建
+
+- **文件**：`openscout-agent-server/Dockerfile`、`openscout-repo-collector/Dockerfile`
+- Java：`maven:3.9-eclipse-temurin-17-alpine` → `eclipse-temurin:17-jre-alpine`，非 root `openscout` 用户，HEALTHCHECK `wget /actuator/health`
+- Go：`golang:1.23-alpine` → `alpine:3.19`，`CGO_ENABLED=0`，`-ldflags="-s -w"` 减小编译产物
+- 均使用多阶段构建，构建依赖不进入运行镜像
+
+### docker-compose 全服务化
+
+- **文件**：`deploy/docker-compose.yml`
+- 4 服务：mysql + redis + collector + agent
+- agent 依赖 mysql (healthy) + collector (started)
+- 所有服务 `restart: unless-stopped`
+- agent 容器内 `FLYWAY_ENABLED` / `OPSCOUT_PERSISTENCE_ENABLED` 默认 false，生产部署时按需开启
+- 服务间通过 Docker DNS 通信（`collector:8081`、`mysql:3306`）
+
+### Go 优雅关闭
+
+- **文件**：`cmd/server/main.go`
+- `signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)` + `http.Server.Shutdown(10s)`
+- `defer cache.Stop()` 清理 eviction goroutine
+
+### CORS + Swagger
+
+- **文件**：`config/CorsConfig.java`
+- `WebMvcConfigurer` 对 `/api/**`、`/swagger-ui/**`、`/v3/api-docs/**` 设置 CORS
+- `allowedOrigins` 默认为 `*`，可配置 `OPSCOUT_CORS_ALLOWED_ORIGINS`
+- `springdoc-openapi-starter-webmvc-ui:2.6.0` 自动生成 OpenAPI 文档
+
+### Go 内存缓存 eviction
+
+- **文件**：`internal/cache/memory.go`
+- 后台 goroutine：每 `TTL/2`（最小 1 分钟）扫描三个 map 删除过期条目
+- `maxEntries = 10000` — Set 操作前检查，超限拒绝写入
+- `Stop()` 方法关闭 `done` channel，停止 goroutine
+
+### V2 数据库迁移
+
+- **文件**：`db/migration/V2__add_users_and_isolation.sql`
+- 新建 `users` 表（id, api_key, name, role, enabled, created_at）
+- `learning_goal`、`learning_task`、`agent_trace` 新增 `user_id BIGINT NULL` + 索引
+- 全部使用 `IF NOT EXISTS` 保证幂等
+
+### 用户体系与多用户隔离
+
+- **文件**：`persistence/user/UserEntity.java`、`UserMapper.java`、`controller/AdminController.java`
+- `AdminController`：`POST /api/admin/users`（生成 UUID Key）、`GET /api/admin/users`（列表，Key 仅显示前 8 位）、`DELETE /api/admin/users/{id}`（吊销）
+- `/api/admin/**` 仅允许 `role=admin` 的 Key 访问
+
+### ApiKeyFilter DB 改造
+
+- **文件**：`config/ApiKeyFilter.java`、`config/SecurityConfig.java`
+- 优先从 `users` 表查询 API Key → 命中则注入 `userId` + `userRole` 到 request attribute
+- 兼容旧版预共享密钥（`OPSCOUT_API_KEY` 环境变量）
+- `SecurityConfig` 使用 `@Autowired(required = false) UserMapper` — 持久化关闭时不会阻塞启动
+
+### userId 全链路传播
+
+- 传播路径（8 层）：`ApiKeyFilter` → request attribute → `AgentController` / `LearningController` → `AgentService` / `AgentRunService` → `TraceService.start()` → `AgentTrace.userId` → `GenerateLearningPlanTool` → `LearningPlanPersistenceService.savePlan(userId)`
+- `LearningGoalEntity`、`LearningTaskEntity`、`AgentTraceEntity` 新增 `userId` 字段
+- userId 为 NULLABLE，保持向后兼容
+
+### Web UI
+
+- **文件**：`src/main/resources/static/index.html`
+- 单文件 SPA：HTML + 内联 CSS + 内联 JS
+- 四个视图：问题输入 → 实时进度（SSE `EventSource`）→ 推荐列表（分数着色）→ 学习计划（状态切换按钮）
+- 无需 Node.js、构建工具或外部 CDN
+
+### 线程安全修复
+
+- `AgentTrace.toolCalls`：`ArrayList` → `CopyOnWriteArrayList`（并行 LLM 步骤安全写入）
+- `AgentContext`：setter 使用 `synchronized` + 防御性拷贝，getter 返回 `Collections.unmodifiableList`
+- `GoalInterpreter`：LLM 返回空/blank 响应时自动重试 1 次
+
+### 验证记录
+
+- `cd openscout-agent-server && mvn test`：146 tests, 0 failures。
+- `cd openscout-repo-collector && go test ./...`：通过。
+- `curl http://localhost:8080/` → 200 (Web UI)
+- `curl http://localhost:8080/swagger-ui.html` → 200 (API 文档)
+- `curl http://localhost:8081/health` → `{"status":"UP"}`
+
 ## 待沉淀主题
 
 - TODO: Spring AI Tool Calling（`@Tool` 注解）、Advisor、结构化输出与 DeepSeek V4 Pro 的实际版本和项目用法（Function Calling 兼容性待验证）。
@@ -658,6 +743,7 @@ cd openscout-agent-server && mvn test -Dtest=AgentEvaluationCommandTest
 - [x] Reflection Verifier、分数完整性/证据声明/学习计划三项规则自检、`verify_answer` Tool、`verify_completed` Trace 事件 → 已沉淀到阶段 12 知识。
 - [x] Agent Evaluation、固定评测集、JSON/Markdown 报告、指标口径、seeded memory REAL plan、默认评测边界 → 已沉淀到阶段 14 知识。
 - [x] Production Hardening、数据库迁移基线、CI、验证脚本、API Key 保护、入站配额、配置治理 → 已沉淀到阶段 15 知识。
+- [x] Phase 0 "Real User Ready"、Docker 全栈部署、Web UI、多用户体系、线程安全、优雅关闭、CORS/Swagger、Go 缓存 eviction → 已沉淀到阶段 16 知识。
 
 ## 索引规则
 

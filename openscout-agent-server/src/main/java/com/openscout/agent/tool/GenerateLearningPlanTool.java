@@ -63,7 +63,8 @@ public class GenerateLearningPlanTool implements AgentTool {
         }
         Instant persistStart = Instant.now();
         try {
-            LearningPlanResponse persisted = learningPlanPersistenceService.savePlan(plan);
+            Long userId = request.trace() != null ? request.trace().getUserId() : null;
+            LearningPlanResponse persisted = learningPlanPersistenceService.savePlan(plan, userId);
             traceService.recordToolCall(request.trace(), "learning_plan_persist",
                     "goalId=" + persisted.goalId(),
                     "persisted=true tasks=" + persisted.tasks().size(),

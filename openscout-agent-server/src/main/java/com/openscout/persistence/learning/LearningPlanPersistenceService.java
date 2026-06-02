@@ -24,14 +24,20 @@ public class LearningPlanPersistenceService {
 
     @Transactional
     public LearningPlanResponse savePlan(LearningPlanResponse plan) {
+        return savePlan(plan, null);
+    }
+
+    @Transactional
+    public LearningPlanResponse savePlan(LearningPlanResponse plan, Long userId) {
         LearningGoalEntity goal = new LearningGoalEntity();
+        goal.setUserId(userId);
         goal.setGoalText(truncate(plan.goal(), 1000));
         goal.setTargetStack(truncate(plan.targetStack(), 500));
         goal.setDurationDays(plan.durationDays());
         goalMapper.insert(goal);
 
         List<LearningTaskResponse> persistedTasks = plan.tasks().stream()
-                .map(task -> insertTask(goal.getId(), task))
+                .map(task -> insertTask(goal.getId(), userId, task))
                 .toList();
         return plan.withPersistence(goal.getId(), true, persistedTasks);
     }
@@ -68,9 +74,10 @@ public class LearningPlanPersistenceService {
         return Optional.of(toResponse(task));
     }
 
-    private LearningTaskResponse insertTask(Long goalId, LearningTaskResponse task) {
+    private LearningTaskResponse insertTask(Long goalId, Long userId, LearningTaskResponse task) {
         LearningTaskEntity entity = new LearningTaskEntity();
         entity.setGoalId(goalId);
+        entity.setUserId(userId);
         entity.setDayNo(task.dayNo());
         entity.setTaskTitle(truncate(task.title(), 300));
         entity.setTaskDetail(task.detail());

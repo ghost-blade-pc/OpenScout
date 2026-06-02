@@ -51,6 +51,10 @@ public class AgentRunService {
     }
 
     public AgentRunCreateResponse createRun(AgentAskRequest request) {
+        return createRun(request, null);
+    }
+
+    public AgentRunCreateResponse createRun(AgentAskRequest request, Long userId) {
         ensureEnabled();
         String question = request.effectiveQuestion();
         if (question.isBlank()) {
@@ -60,7 +64,7 @@ public class AgentRunService {
             throw new IllegalStateException("too many active agent runs");
         }
 
-        AgentTrace trace = traceService.start(question);
+        AgentTrace trace = traceService.start(question, userId);
         String runId = UUID.randomUUID().toString();
         AgentRun run = new AgentRun(runId, trace.getTraceId(), question, Instant.now());
         run.markRunning();

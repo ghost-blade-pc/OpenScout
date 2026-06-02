@@ -45,8 +45,13 @@ public class TraceService {
     }
 
     public AgentTrace start(String question) {
+        return start(question, null);
+    }
+
+    public AgentTrace start(String question, Long userId) {
         String traceId = UUID.randomUUID().toString();
         AgentTrace trace = new AgentTrace(traceId, sanitize(question), Instant.now());
+        trace.setUserId(userId);
         traces.put(traceId, trace);
         persistIfEnabled(() -> tracePersistenceService.insertTrace(trace));
         return trace;

@@ -1,16 +1,17 @@
 package com.openscout.trace;
 
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 public class AgentTrace {
 
     private Long id;
+    private Long userId;
     private final String traceId;
     private final String userQuestion;
     private final Instant startedAt;
-    private final List<TraceToolCall> toolCalls = new ArrayList<>();
+    private final List<TraceToolCall> toolCalls = new CopyOnWriteArrayList<>();
     private String scoreSummary;
     private String finalAnswer;
     private long latencyMs;
@@ -29,6 +30,14 @@ public class AgentTrace {
 
     public void setId(Long id) {
         this.id = id;
+    }
+
+    public Long getUserId() {
+        return userId;
+    }
+
+    public void setUserId(Long userId) {
+        this.userId = userId;
     }
 
     public String getTraceId() {

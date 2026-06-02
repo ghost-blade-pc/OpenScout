@@ -71,6 +71,9 @@ openscout:
     max-requests-per-window: ${OPSCOUT_QUOTA_MAX_REQUESTS:30}
     window-seconds: ${OPSCOUT_QUOTA_WINDOW_SECONDS:60}
 
+  cors:
+    allowed-origins: ${OPSCOUT_CORS_ALLOWED_ORIGINS:*}
+
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
