@@ -1,548 +1,216 @@
 # OpenScout Agent
 
-OpenScout Agent 是一个面向开发者的开源项目情报分析与学习路径助手。第一阶段先实现可运行 MVP：Java 服务接收学习目标，调用 Go Repo Collector mock 接口获取候选项目，执行规则评分，返回推荐结果并记录 Agent Trace。
+面向开发者的开源项目情报分析与学习路径助手。输入学习目标，Agent 自动检索 GitHub、规则评分、LLM 生成推荐与 7 天学习计划，全程可追踪。
 
-## 当前范围
+**技术栈**：Java 17 + Spring Boot 3.3 + MyBatis-Plus · Go 1.22 + Gin · MySQL + Redis · DeepSeek V4 Pro
 
-- Java 17 + Spring Boot + MyBatis-Plus：提供 `/api/agent/ask`，通过 Agent Runtime + Tool Runtime 执行 mock/real 编排、规则评分、学习计划、Trace 和 Agent Run/SSE 事件流。
-- Go 1.22 + Gin：提供 Repo Collector 接口，支持 mock 模式和可选 GitHub API 模式。
-- MySQL + Redis：通过 Docker Compose 提供本地依赖；**持久化默认关闭**，启用方式见下方"持久化"章节。
-- Spring AI + DeepSeek V4 Pro：配置位已预留，后续阶段再接真实 Tool Calling。
+---
 
-## 目录
+## 快速开始
 
-```text
-openscout-agent-server/      Java Agent 编排服务
-openscout-repo-collector/    Go Repo Collector 服务
-deploy/                      MySQL/Redis compose 与 init.sql
-docs/                        架构、接口、Demo、简历材料
-code_copilot/                SpecAI 工作区
-```
-
-## 本地启动
-
-启动 MySQL 和 Redis：
+### 1. 启动基础设施
 
 ```bash
-docker compose -f deploy/docker-compose.yml up -d
+docker compose -f deploy/docker-compose.yml up -d   # MySQL + Redis
 ```
 
-启动 Go Collector：
+### 2. 配置环境变量
 
 ```bash
-cd openscout-repo-collector
-go run ./cmd/server
+cp .env.example .env
+# 编辑 .env：mock 模式无需任何密钥即可运行
+# 真实模式需填入 GITHUB_TOKEN 和 DEEPSEEK_API_KEY
+set -a && source .env && set +a
 ```
 
-启动 Java Agent Server：
+### 3. 启动服务
 
 ```bash
-cd openscout-agent-server
-mvn spring-boot:run
+# Go Collector（8081 端口）
+cd openscout-repo-collector && go run ./cmd/server &
+
+# Java Agent Server（8080 端口）
+cd openscout-agent-server && mvn spring-boot:run &
 ```
 
-调用 mock Agent：
+### 4. 调用
 
 ```bash
 curl -X POST http://localhost:8080/api/agent/ask \
   -H 'Content-Type: application/json' \
-  -d '{"question":"我想一周内学习 Spring AI Agent"}'
+  -d '{"question":"我想学习 Go 微服务，推荐几个适合进阶的开源项目"}'
 ```
 
-查看 Trace：
+响应包含：`traceId`、LLM 分析回答、评分排序的推荐列表（含评分证据）、7 天学习计划。
+
+### 5. 查看 Trace
 
 ```bash
 curl http://localhost:8080/api/agent/traces/<traceId>
 ```
 
-## Go Collector API
+---
 
-```bash
-curl http://localhost:8081/api/repos/mock
-curl 'http://localhost:8081/api/repos/search?keyword=spring-ai-agent&limit=10'
-curl http://localhost:8081/api/repos/spring-projects/spring-ai/profile
-curl http://localhost:8081/api/repos/spring-projects/spring-ai/readme
-curl -X POST http://localhost:8081/api/repos/batch-profile \
-  -H 'Content-Type: application/json' \
-  -d '{"repos":["spring-projects/spring-ai","langchain4j/langchain4j","bad"]}'
-```
+## 一键脚本
 
-真实 GitHub API 模式：
-
-```bash
-export OPSCOUT_COLLECTOR_MODE=github
-export GITHUB_TOKEN=<secret>
-go run ./cmd/server
-```
-
-未配置 `GITHUB_TOKEN` 时也可以访问公开 API，但会受到更严格的频率限制。演示优先使用 mock 模式。
-
-## 真实模式使用（阶段 5）
-
-本阶段提供了两个独立的模式开关，分别控制 Go Collector 和 Java Agent 的行为：
-
-| 开关 | 作用 | 默认值 |
+| 脚本 | 用途 | 依赖 |
 |---|---|---|
-| `OPSCOUT_COLLECTOR_MODE` (Go) | `mock` / `github` — 控制 Go Collector 数据源 | `mock` |
-| `OPSCOUT_MOCK_AGENT` (Java) | `true` / `false` — 控制 Java Agent 编排路径 | `true` |
+| `scripts/verify-local.sh` | 全量验证（Java + Go + Eval + Compose） | Java, Go, Docker |
+| `scripts/demo-mock.sh` | Mock 模式演示（启动服务 + 示例请求） | Java |
+| `scripts/demo-real-optional.sh` | 真实模式验证 | GitHub Token, LLM Key, Docker |
 
-四种组合：
+---
 
-| Go `OPSCOUT_COLLECTOR_MODE` | Java `OPSCOUT_MOCK_AGENT` | 行为 |
+## 核心模式
+
+项目通过环境变量控制运行模式，默认 **完全 mock**（零依赖、零密钥即可运行）。
+
+| 模式 | 配置 | 说明 |
 |---|---|---|
-| `mock` | `true` | 完全 mock（默认，无需 Token） |
-| `github` | `true` | Java 仍调 mock Agent（不推荐，Go 启动真实模式但 Java 不调用） |
-| `mock` | `false` | Java 调 Go 真实端点，Go 返回 mock 数据（用于测试 Java → Go 链路） |
-| `github` | `false` | 完全真实模式（需要 Token，生产演示） |
+| Mock（默认） | `OPSCOUT_MOCK_AGENT=true OPSCOUT_COLLECTOR_MODE=mock` | 本地即可运行，无需任何外部服务 |
+| 真实 GitHub | `OPSCOUT_COLLECTOR_MODE=github GITHUB_TOKEN=<token>` | 调用 GitHub Search/Profile/Readme API |
+| LLM 增强 | `OPSCOUT_LLM_ENABLED=true DEEPSEEK_API_KEY=<key>` | DeepSeek V4 Pro 生成自然语言推荐 + 学习计划 |
+| MySQL 持久化 | `OPSCOUT_PERSISTENCE_ENABLED=true` | Trace/Repo/Learning 数据落库 |
 
-**真实模式完整启动步骤：**
+**核心开关**：
 
-```bash
-# 1. 设置 Go Collector 为真实模式
-export OPSCOUT_COLLECTOR_MODE=github
-export GITHUB_TOKEN=<secret>
-# 可选：调整限流/缓存/并发
-export OPSCOUT_RATE_LIMIT_RPS=2
-export OPSCOUT_CACHE_TTL_MINUTES=10
-export OPSCOUT_WORKER_CONCURRENCY=4
-export OPSCOUT_HTTP_TIMEOUT_SECONDS=8
-
-# 2. 启动 Go Collector
-cd openscout-repo-collector && go run ./cmd/server &
-
-# 3. 设置 Java Agent 为非 mock 模式
-export OPSCOUT_MOCK_AGENT=false
-
-# 4. 启动 Java Agent Server
-cd openscout-agent-server && mvn spring-boot:run &
-
-# 5. 调用真实模式 Agent
-curl -X POST http://localhost:8080/api/agent/ask \
-  -H 'Content-Type: application/json' \
-  -d '{"question":"我想学习 Spring AI Agent"}'
-```
-
-**速率限制说明：**
-
-- 未配置 `GITHUB_TOKEN`：60 次/小时（GitHub 匿名限制）。
-- 已配置 `GITHUB_TOKEN`：5000 次/小时（GitHub 认证用户限制）。
-- 遇到限流（429）时，Java 会返回带 `Retry-After` 头的友好提示。
-- README 获取限制为前 5 个 repo，避免 N+1 次调用快速耗尽配额。
-
-**Go Collector 可配置参数：**
-
-| 环境变量 | 默认值 | 说明 |
+| 环境变量 | 默认值 | 作用 |
 |---|---|---|
-| `OPSCOUT_RATE_LIMIT_RPS` | `2` | GitHub API 每秒请求数 |
-| `OPSCOUT_RATE_LIMIT_BURST` | `4` | 突发请求数 |
-| `OPSCOUT_CACHE_TTL_MINUTES` | `10` | 进程内缓存 TTL（分钟） |
-| `OPSCOUT_WORKER_CONCURRENCY` | `4` | 批量采集并发数 |
-| `OPSCOUT_HTTP_TIMEOUT_SECONDS` | `8` | HTTP 客户端超时（秒） |
+| `OPSCOUT_MOCK_AGENT` | `true` | Agent 编排模式 |
+| `OPSCOUT_COLLECTOR_MODE` | `mock` | Go Collector 数据源 |
+| `OPSCOUT_LLM_ENABLED` | `true` | LLM 自然语言生成 |
+| `OPSCOUT_PERSISTENCE_ENABLED` | `false` | MySQL 持久化 |
+| `OPSCOUT_SECURITY_ENABLED` | `false` | API Key 鉴权 |
+| `OPSCOUT_QUOTA_ENABLED` | `false` | 入站配额限流 |
 
-## LLM 智能回答（阶段 6）
+完整配置清单见 `.env.example`。
 
-本阶段接入 DeepSeek V4 Pro 作为自然语言生成层。LLM 负责两件事：
-- **目标解释**：将用户自然语言目标（如"我想一周内学 Spring AI"）提取为 GitHub 搜索关键词
-- **回答生成**：基于规则评分结果生成个性化的自然语言推荐文本
+---
 
-**Fallback 机制**：未配置 `DEEPSEEK_API_KEY` 或 LLM 调用失败时，自动降级为模板回答，不影响搜索和评分链路。
+## API 参考
 
-启用 LLM：
+### Agent 主接口
 
-```bash
-export SPRING_AI_MODEL_CHAT=openai
-export DEEPSEEK_API_KEY=<secret>
-```
-
-强制禁用 LLM（使用模板回答）：
-
-```bash
-export OPSCOUT_LLM_ENABLED=false
-```
-
-LLM 调用详情（prompt 摘要、response 摘要、耗时）记录在 `/api/agent/traces/{traceId}` 中。
-
-**LLM 可配置参数：**
-
-| 环境变量 | 默认值 | 说明 |
+| 方法 | 路径 | 说明 |
 |---|---|---|
-| `OPSCOUT_LLM_ENABLED` | `true` | 设为 `false` 强制模板模式 |
-| `OPSCOUT_LLM_TIMEOUT_SECONDS` | `30` | LLM API 调用超时（秒） |
-| `OPSCOUT_LLM_MAX_TOKENS` | `2000` | 回答最大 token 数 |
-| `OPSCOUT_LLM_TEMPERATURE` | `0.7` | LLM 温度参数 |
+| `POST` | `/api/agent/ask` | 同步 Agent 请求，返回推荐 + 学习计划 |
+| `GET` | `/api/agent/traces/{traceId}` | 查询 Agent Trace（步骤/工具/观察） |
+| `POST` | `/api/agent/runs` | 创建异步 Agent Run |
+| `GET` | `/api/agent/runs/{runId}` | 查询 Run 状态 |
+| `GET` | `/api/agent/runs/{runId}/events` | SSE 事件流（实时观测 Agent 决策过程） |
 
-Spring AI 模型默认不启用，避免 mock 演示在未配置 Key 时启动失败。后续接入 DeepSeek 时再显式开启：
+### 学习计划
 
-```bash
-export SPRING_AI_MODEL_CHAT=openai
-export DEEPSEEK_API_KEY=<secret>
-```
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `GET` | `/api/learning/goals/{goalId}` | 查询学习目标及 7 天任务 |
+| `PATCH` | `/api/learning/tasks/{taskId}/status` | 更新任务状态（TODO/DOING/DONE） |
 
-## Agent Runtime（阶段 8）
+### Go Collector
 
-`/api/agent/ask` 当前通过规则模板 Agent Runtime 执行固定计划。第一版 Runtime 只显式化现有链路，不引入 RAG、SSE、前端或生产鉴权。
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `GET` | `/health` | 健康检查 |
+| `GET` | `/api/repos/mock` | Mock 仓库列表 |
+| `GET` | `/api/repos/search?keyword=&limit=` | GitHub 搜索 |
+| `GET` | `/api/repos/:owner/:repo/profile` | 仓库详情 |
+| `GET` | `/api/repos/:owner/:repo/readme` | README 内容 |
+| `POST` | `/api/repos/batch-profile` | 批量获取仓库详情 |
 
-mock 模式计划：
+---
+
+## Agent 决策流程
+
+真实模式计划（9 步固定管道）：
 
 ```text
-interpret_goal -> check_memory -> search_repos -> score_projects -> evidence_react -> generate_learning_plan -> generate_answer -> verify_answer
+interpret_goal → check_memory → search_repos → fetch_readme
+→ score_projects → evidence_react → ┐
+                                      ├─ generate_learning_plan  ┬→ verify_answer
+                                      └─ generate_answer         ┘   (规则自检)
+                                   (LLM 并行，延迟 -38%)
 ```
 
-真实 GitHub 模式计划：
+| 步骤 | 工具 | 职责 |
+|---|---|---|
+| 1 | `interpret_goal` | LLM 提取 GitHub 搜索关键词 |
+| 2 | `check_memory` | MySQL 关键词检索，命中则跳过搜索 |
+| 3 | `search_repos` | Go Collector → GitHub Search API |
+| 4 | `fetch_readme` | 补充 Top 5 项目的 README |
+| 5 | `score_projects` | 规则引擎评分（活跃度/文档/匹配/学习/简历） |
+| 6 | `evidence_react` | 检测证据缺口，有限补查 |
+| 7-8 | `generate_learning_plan` + `generate_answer` | LLM 并行：学习计划 + 推荐回答 |
+| 9 | `verify_answer` | 规则自检（分数一致性/证据声明/学习计划可行性） |
+
+关键约束：**评分由规则引擎计算，LLM 不得修改分数**。LLM 不可用时自动 fallback 到模板回答。
+
+---
+
+## 项目结构
 
 ```text
-interpret_goal -> check_memory -> search_repos -> fetch_readme -> score_projects -> evidence_react -> generate_learning_plan -> generate_answer -> verify_answer
+openscout-agent-server/         Java Agent 编排服务（Spring Boot）
+  src/main/java/com/openscout/
+    agent/                      Agent 核心（Runtime/Tool/ReAct/Verifier/Event/Run）
+    client/                     Go Collector HTTP 客户端
+    config/                     配置、安全、限流
+    evaluation/                 可复现 Agent 评测
+    learning/                   学习计划生成与 API
+    memory/                     Project Memory / RAG
+    persistence/                MyBatis-Plus 持久化
+    scoring/                    规则评分引擎
+    trace/                      Agent Trace
+openscout-repo-collector/       Go Repo Collector（Gin）
+  internal/
+    api/                        HTTP 路由与中间件
+    cache/                      进程内 TTL 缓存
+    github/                     GitHub REST API 客户端
+    limiter/                    速率限制
+    service/                    业务编排
+    worker/                     并发 Worker Pool
+deploy/                         Docker Compose + init.sql
+scripts/                        验证与演示脚本
+code_copilot/                   SpecAI 工作区（规则/变更记录/知识库）
 ```
 
-Trace 中会通过 `TraceToolCall.toolName` 事件记录 Runtime 过程：
+---
 
-| toolName | 含义 |
-|---|---|
-| `agent_plan_created` | 计划创建，包含 planId、mode 和 step 数 |
-| `agent_step_started` | 单个 step 开始执行 |
-| `agent_step_finished` | 单个 step 执行完成或失败 |
-| `agent_observation_created` | step observation 摘要 |
+## 开发
 
-这些事件仍复用既有 Trace 脱敏和长度截断规则，不新增数据库表或 DDL。`/api/agent/ask` 响应字段保持兼容。
-
-## Tool Runtime（阶段 9）
-
-阶段 9 将 Agent Runtime 的固定 step 标准化为 Java Agent Server 内部 Tool Runtime。Planner 仍只生成固定 toolName，用户不能动态指定任意 Tool；当前不新增公开 Tool API、Spring AI `@Tool`、MCP、SSE 或 Trace DDL。
-
-当前内部 Tool：
-
-| toolName | 责任 |
-|---|---|
-| `interpret_goal` | 将用户目标解释为搜索关键词 |
-| `check_memory` | 检查 MySQL 中是否已有新鲜项目数据，命中时复用 |
-| `search_repos` | 调用 Go Collector mock 或 GitHub search |
-| `fetch_readme` | 真实模式为 Top repo 补充 README 证据，单项失败 best-effort 跳过 |
-| `score_projects` | 通过规则评分生成推荐结果，LLM 不得覆盖分数 |
-| `evidence_react` | 基于评分后的 evidence gap 追加有限 README 补查并重评分 |
-| `generate_learning_plan` | 生成 7 天学习计划，持久化失败时返回临时计划 |
-| `generate_answer` | 基于规则评分生成最终回答，LLM 不可用时 fallback |
-| `verify_answer` | 对最终回答、证据声明和学习计划做规则自检，不阻断主流程 |
-
-Trace 继续复用 `TraceToolCall`，在阶段 8 的 plan/step/observation 事件之外追加 Tool Runtime 事件：
-
-| toolName | 含义 |
-|---|---|
-| `agent_tool_started` | Tool 开始执行，记录 stepId、toolName 和输入摘要 |
-| `agent_tool_finished` | Tool 成功完成，记录输出摘要和耗时 |
-| `agent_tool_failed` | Tool 失败或 recoverable failure，记录错误摘要 |
-
-Tool 输入输出只保存摘要和脱敏字段，不保存完整 README、完整 prompt、完整模型响应、模型 Key 或 GitHub Token。
-
-## Evidence ReAct（阶段 11）
-
-阶段 11 在 `score_projects` 之后加入 `evidence_react` 固定 Tool，用规则检测 Top 推荐项目的 evidence gap。第一版只补 README evidence，不调用 release、目录结构、issues 或其他额外 GitHub API；不引入动态 Tool 选择、Spring AI `@Tool`、MCP、SSE、Verifier 或 Trace DDL。
-
-默认配置：
-
-| 环境变量 | 默认值 | 说明 |
-|---|---|---|
-| `OPSCOUT_REACT_ENABLED` | `true` | 是否启用 Evidence ReAct |
-| `OPSCOUT_REACT_MAX_ROUNDS` | `1` | 最大补查轮数 |
-| `OPSCOUT_REACT_MAX_FOLLOW_UP_REPOS` | `3` | 单轮最多补查的 repo 数 |
-
-Trace 追加以下摘要事件：
-
-| toolName | 含义 |
-|---|---|
-| `evidence_gap_detected` | 记录本轮发现的 gap 数量、repo 和 gapType |
-| `evidence_follow_up_started` | 记录补查 action 和原因 |
-| `evidence_follow_up_observed` | 记录补查状态、README 长度、限流或错误摘要 |
-| `evidence_rescore_completed` | 补查成功后重新评分完成 |
-| `evidence_react_stopped` | 记录停止原因，如 disabled、mode_not_real、no_actionable_gap、rate_limited、max_rounds_reached |
-
-`evidence_react` 只增强证据，不允许 LLM 修改规则评分。GitHub 404 和普通单 repo 失败会降级为 observation；遇到限流会停止后续补查，但不破坏 `/api/agent/ask` 主流程。
-
-## Agent Events Stream（阶段 13）
-
-阶段 13 新增异步 Agent Run 与 SSE 事件流，用于本地演示和工程观测。旧的同步接口 `/api/agent/ask` 保持兼容；需要实时观察计划、工具、观察、补查和自检过程时，使用 run API。
-
-创建异步 run：
+### 运行测试
 
 ```bash
-curl -X POST http://localhost:8080/api/agent/runs \
-  -H 'Content-Type: application/json' \
-  -d '{"question":"我想一周内学习 Spring AI Agent"}'
+# Java（146 tests）
+cd openscout-agent-server && mvn test
+
+# Go
+cd openscout-repo-collector && go test ./...
+
+# Agent Evaluation
+cd openscout-agent-server && mvn test -Dtest=AgentEvaluationCommandTest
 ```
-
-响应包含 `runId`、`traceId`、当前 `status` 和 `eventsUrl`。查询 run 快照：
-
-```bash
-curl http://localhost:8080/api/agent/runs/<runId>
-```
-
-订阅 SSE 事件流：
-
-```bash
-curl -N http://localhost:8080/api/agent/runs/<runId>/events
-```
-
-事件类型包括：
-
-| event | 含义 |
-|---|---|
-| `run_started` | run 已创建并开始执行 |
-| `plan_created` | Agent Runtime 计划已生成 |
-| `step_started` / `step_finished` | 单个 step 开始或结束 |
-| `tool_started` / `tool_finished` / `tool_failed` | Tool 调用开始、成功或失败 |
-| `observation_created` | step observation 摘要已生成 |
-| `evidence_*` | Evidence ReAct gap、补查、重评分或停止摘要 |
-| `verify_completed` | Reflection Verifier 自检摘要 |
-| `run_completed` / `run_failed` | run 最终成功或失败 |
-| `heartbeat` | 长连接心跳 |
-
-默认配置：
-
-| 环境变量 | 默认值 | 说明 |
-|---|---|---|
-| `OPSCOUT_EVENTS_ENABLED` | `true` | 是否启用 run/SSE 接口 |
-| `OPSCOUT_EVENTS_SSE_TIMEOUT_SECONDS` | `300` | 单个 SSE 连接超时秒数 |
-| `OPSCOUT_EVENTS_BUFFER_SIZE` | `200` | 每个 run 保留的最近事件数 |
-| `OPSCOUT_EVENTS_MAX_ACTIVE_RUNS` | `20` | 内存中最多活跃 run 数 |
-| `OPSCOUT_EVENTS_EXECUTOR_THREADS` | `4` | 异步 run 执行线程数 |
-| `OPSCOUT_EVENTS_HEARTBEAT_SECONDS` | `15` | SSE 心跳间隔 |
-| `OPSCOUT_EVENTS_COMPLETED_RETENTION_SECONDS` | `300` | 已完成 run 和事件回放 buffer 的保留秒数 |
-
-心跳与 completed cleanup 的后台调度最小间隔为 1 秒；即使上述秒数配置为 `0`，也不会以 0ms fixed delay 空转。
-
-第一版使用进程内 run store 和 bounded event buffer，不新增 DDL、Redis/MQ、跨实例广播或事件持久化。事件 payload 只输出摘要字段，并复用 Trace 脱敏和长度截断规则；完整 README、完整 prompt、Token、Key 和异常堆栈不会进入事件流。
-
-## Agent Evaluation（阶段 14）
-
-阶段 14 新增本地可复现的 Agent Evaluation，用固定 fixture 执行 Agent，基于 response + Trace toolName 事件计算推荐相关性、evidence 覆盖、Verifier 结果、Memory 命中、fallback、延迟和 GitHub API 调用节省，并输出 JSON/Markdown 报告。
-
-默认评测命令：
-
-```bash
-cd openscout-agent-server
-mvn test -Dtest=AgentEvaluationCommandTest
-```
-
-报告输出：
-
-```text
-openscout-agent-server/target/openscout-evaluation/agent-evaluation-report.json
-openscout-agent-server/target/openscout-evaluation/agent-evaluation-report.md
-```
-
-默认 fixture 是 mock-first，本地可重复运行，不依赖 `GITHUB_TOKEN`、`DEEPSEEK_API_KEY`、Docker 或外网。默认命令包含一个必跑的 memory-hit REAL plan 样本，但使用测试内 seeded memory，不访问真实 GitHub；真实 GitHub / LLM enabled case 只作为 optional 样本，默认命令会跳过，不作为必过项。
-
-当前报告核心字段：
-
-| 字段 | 含义 |
-|---|---|
-| `summary.allRequiredPassed` | 默认必测 case 是否全部通过 |
-| `averageRecommendationRelevance` | 推荐项目与期望关键词的匹配比例 |
-| `averageEvidenceCoverage` | 推荐 evidence 对期望证据关键词的覆盖比例 |
-| `fallbackCases` | 观察到 fallback 的样本数，例如 LLM disabled 模板回答 |
-| `verifierIssueCases` | Verifier 报告 issue 的样本数 |
-| `memoryHitCases` | Trace 中出现 memory hit / search skipped 的样本数 |
-| `githubSearchCalls` / `githubReadmeFetchCalls` | Trace 中真实 GitHub search 调用次数和 README 实际 fetched 次数；cache hit 不计入真实 README 调用 |
-| `githubCallSavings` | 基于 memory/search skip/readme cache 事件估算的调用节省 |
-| `samples[].mode` | 样本实际执行的 Agent Runtime mode，用于区分 MOCK、REAL 和 optional case |
-
-评测报告只证明本地 fixture 下的可重复行为，不代表生产 SLA、线上准确率或大规模 benchmark。报告不输出 GitHub Token、模型 Key、完整 README、完整 prompt、完整模型响应或异常堆栈。
-
-## Production Hardening（阶段 15）
-
-阶段 15 补齐第一版工程化基线：数据库迁移、CI 验证、演示脚本、最小 API Key 保护、入站配额和配置治理。
-
-### 配置矩阵
-
-| 维度 | 环境变量 | 默认值 | 说明 |
-|---|---|---|---|
-| Mock/Real Agent | `OPSCOUT_MOCK_AGENT` | `true` | 默认 mock 无需外部依赖 |
-| Mock/Real Collector | `OPSCOUT_COLLECTOR_MODE` | `mock` | mock / github |
-| LLM | `OPSCOUT_LLM_ENABLED` | `true` | 无 Key 时自动 fallback |
-| 持久化 | `OPSCOUT_PERSISTENCE_ENABLED` | `false` | 需要 MySQL |
-| Flyway 迁移 | `FLYWAY_ENABLED` | `false` | 新建数据库后启用 |
-| API Key 保护 | `OPSCOUT_SECURITY_ENABLED` | `false` | 本地 Demo 不需要 |
-| 入站配额 | `OPSCOUT_QUOTA_ENABLED` | `false` | 本地 Demo 不需要 |
-
-**重要边界**：
-- API Key 是最小访问门，不解决用户身份、权限、审计或多租户。
-- 入站配额是进程内固定窗口，重启清空，多实例不共享。
-- 以上两项默认关闭以确保本地 Demo 和测试不退化。
-
-### API Key 保护
-
-为 Java Agent Server (`/api/*`) 和 Go Collector (`/api/repos/*`) 提供可选 API Key 保护。/health 始终豁免。
-
-```bash
-# 启用 API Key 保护
-export OPSCOUT_SECURITY_ENABLED=true
-export OPSCOUT_API_KEY=<your-secret-key>
-export OPSCOUT_COLLECTOR_API_KEY=<your-secret-key>
-```
-
-带 Key 调用：
-
-```bash
-curl -H 'X-OpenScout-Api-Key: <your-secret-key>' http://localhost:8080/api/agent/ask ...
-```
-
-缺失或错误 Key 返回 401，错误响应不包含 Key 值。
-
-### 入站配额
-
-对 `POST /api/agent/ask` 和 `POST /api/agent/runs` 提供进程内固定窗口限流。配额键优先 API Key，其次 client IP。
-
-```bash
-export OPSCOUT_QUOTA_ENABLED=true
-export OPSCOUT_QUOTA_MAX_REQUESTS=30    # 每窗口最大请求数
-export OPSCOUT_QUOTA_WINDOW_SECONDS=60  # 窗口秒数
-```
-
-超限返回 429 `{"error":"Too many requests...","code":"QUOTA_EXCEEDED"}`。
-
-### 数据库迁移
-
-引入 Flyway 版本化 schema 管理。V1 基线复用 `deploy/init.sql` 现有表结构，不新增业务语义。
-
-- 默认 `FLYWAY_ENABLED=false`，与 `OPSCOUT_PERSISTENCE_ENABLED` 一致的关闭策略。
-- 新环境首次启用：启动 Docker MySQL 后，`export FLYWAY_ENABLED=true` 再启动 Java。
-- 后续 schema 变更新建 `V2__xxx.sql` 等迁移文件。
-- `deploy/init.sql` 继续服务 Docker 首次初始化。
-
-### 本地验证与演示
-
-```bash
-# 一键验证（mock-first，无密钥，无外网）
-scripts/verify-local.sh
-
-# Mock 演示（启动服务 + 示例请求）
-scripts/demo-mock.sh
-
-# 可选真实验证（需要 GITHUB_TOKEN + DEEPSEEK_API_KEY + Docker）
-scripts/demo-real-optional.sh
-```
-
-`demo-real-optional.sh` 缺失环境变量时会给出明确提示并正常退出，不会误报失败。
 
 ### CI
 
-仓库 CI 已覆盖：
+`.github/workflows/ci.yml`：`java-test` + `go-test` + `compose-config`，默认不依赖外部服务或密钥。
 
-| Job | 内容 |
-|---|---|
-| `java-test` | `mvn test`（全量）+ `AgentEvaluationCommandTest` |
-| `go-test` | `go test ./...` |
-| `compose-config` | `docker compose config` 校验 |
+### 数据库迁移
 
-CI 默认不依赖 GitHub Token、DeepSeek Key、MySQL 长驻服务或外网业务调用。
+DDL 基线：`deploy/init.sql`（Docker 首次初始化）和 `V1__init_schema.sql`（Flyway，需显式启用 `FLYWAY_ENABLED=true`）。后续 schema 变更通过 `V2__xxx.sql` 等迁移文件管理。
 
-### 配置示例
+---
 
-```bash
-cp .env.example .env
-# 编辑 .env 填入实际值；所有占位符不包含真实密钥
-# 启动服务前加载环境变量（需 export 到子进程）：
-set -a && source .env && set +a
-```
+## 路线图
 
-## 学习计划（阶段 7）
+- **V1（已完成）**：Agent 决策闭环（Runtime → Tool → Memory → ReAct → Verifier → Events → Eval → Hardening），16 个阶段，146 tests
+- **V2（规划中）**：详见 [`V2版本项目方案.md`](V2版本项目方案.md) — 线程安全加固、Go 优雅关闭、测试覆盖补齐、向量检索、分布式 Quota、动态 Tool Planning
 
-`/api/agent/ask` 会在推荐结果中追加 `learningPlan` 字段，基于 Top 推荐项目和规则评分证据生成 7 天学习任务。学习计划默认启用，规则模板可在无模型 Key 时稳定生成；LLM 可用时只做文案增强，不修改评分和 evidence。
+---
 
-关闭学习计划生成：
+## 约束与安全
 
-```bash
-export OPSCOUT_LEARNING_ENABLED=false
-```
-
-默认持久化关闭时，`learningPlan.persisted=false`，计划只随本次响应返回：
-
-```json
-{
-  "learningPlan": {
-    "goalId": null,
-    "goal": "我想一周内学习 Spring AI Agent",
-    "targetStack": "Java",
-    "durationDays": 7,
-    "persisted": false,
-    "tasks": [
-      {
-        "id": null,
-        "dayNo": 1,
-        "title": "明确目标与项目范围",
-        "detail": "围绕用户目标阅读推荐项目 README、快速开始和目录结构...",
-        "expectedOutput": "写出项目定位、核心模块猜测和 3 个待验证问题。",
-        "status": "TODO"
-      }
-    ]
-  }
-}
-```
-
-启用 MySQL 持久化后，ask 会保存 `learning_goal` 和 `learning_task`，并返回可查询的 `goalId`：
-
-```bash
-export OPSCOUT_PERSISTENCE_ENABLED=true
-docker compose -f deploy/docker-compose.yml up -d mysql
-cd openscout-agent-server && mvn spring-boot:run
-```
-
-查询学习计划：
-
-```bash
-curl http://localhost:8080/api/learning/goals/<goalId>
-```
-
-更新任务状态：
-
-```bash
-curl -X PATCH http://localhost:8080/api/learning/tasks/<taskId>/status \
-  -H 'Content-Type: application/json' \
-  -d '{"status":"DONE"}'
-```
-
-任务状态只支持 `TODO`、`DOING`、`DONE`。`/api/learning/*` 当前是 MVP 本地 Demo 接口，未实现登录鉴权，不应直接公网暴露。
-
-## 持久化（阶段 4）
-
-`agent_trace`、`repo_info`、`repo_analysis` 可通过 MyBatis-Plus 写入 MySQL。**持久化默认关闭**，以保持阶段 3 的纯 mock 演示不依赖 MySQL。
-
-启用持久化：
-
-```bash
-export OPSCOUT_PERSISTENCE_ENABLED=true
-docker compose -f deploy/docker-compose.yml up -d mysql
-cd openscout-agent-server && mvn spring-boot:run
-```
-
-调用 `/api/agent/ask` 后验证数据落库：
-
-```bash
-docker exec openscout-mysql mysql -uopenscout -popenscout openscout \
-  -e "select trace_id,status,latency_ms from agent_trace order by id desc limit 5;"
-
-docker exec openscout-mysql mysql -uopenscout -popenscout openscout \
-  -e "select full_name,language,stars from repo_info order by id desc limit 5;"
-
-docker exec openscout-mysql mysql -uopenscout -popenscout openscout \
-  -e "select full_name,total_score from repo_analysis order by id desc limit 5;"
-```
-
-重启 Java 后仍可通过 `/api/agent/traces/{traceId}` 从 MySQL 查询历史 Trace。
-
-**重要约束**：
-- Trace 只保存摘要和脱敏字段，不保存完整 README、完整 prompt、模型 Key 或 GitHub Token。
-- `/api/agent/traces/{traceId}` 仅用于本地排障，未做鉴权，不应公网暴露。
-- 重复 mock ask 对 `repo_info.full_name` 做幂等 upsert，不会因唯一索引冲突而失败。
-
-## 验证
-
-```bash
-cd openscout-repo-collector && go test ./...
-cd openscout-agent-server && mvn test
-```
-
-## 现实约束
-
-- GitHub API 有 rate limit，真实模式必须设置超时、限流和错误兜底。
-- Agent Trace 只保存摘要，不保存完整 README、完整 prompt、Token 或模型 Key。
-- 第一阶段评分由规则产生，LLM 只负责解释，避免模型主观改分。
+- GitHub API 限流：匿名 60 次/小时，认证 5000 次/小时。429 自动降级。
+- Trace 不保存完整 README、完整 prompt、Token 或 API Key，仅存储脱敏摘要。
+- `/api/learning/*` 和 `/api/agent/traces/*` 为本地 MVP 接口，未做鉴权，不应公网暴露。
+- API Key 和入站配额默认关闭，本地 Demo 和 CI 不退化。
+- 评分由规则引擎产生，LLM 只负责解释，不覆盖评分数字。
